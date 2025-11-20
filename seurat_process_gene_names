@@ -1,0 +1,133 @@
+library(Seurat)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(dplyr)
+library(clusterProfiler)
+library(patchwork)
+library(ggplot2)
+library(CellChat)
+library(circlize)
+library(NMF)
+library(ggalluvial)
+library(patchwork)  # for `+` operator combining plots
+library(reticulate)
+library(future)
+library(pheatmap)
+library(grid)
+library(gtools)
+library(scales)
+library(RColorBrewer)
+
+py_install("umap-learn")
+options(stringsAsFactors = FALSE)
+options(future.globals.maxSize = 48 * 1024^3)  # Set limit to 16GB
+mem.maxVSize(vsize = Inf)
+
+# Set working directory and load the file
+
+pv <- readRDS(file = "/2025-06-08_PV.rds")
+
+# Change to gene symbol NEW BIOMART---------------
+# Get your gene names
+current_genes <- rownames(pv)
+
+# Clean ENSMUSG IDs (remove version suffixes)
+clean_ensmusg <- sub("\\.\\d+$", "", current_genes)
+clean_ensmusg <- sub("_.*$", "", clean_ensmusg)
+
+# Connect to Ensembl mouse database
+mart <- useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+
+# Get gene symbol mapping
+gene_mapping <- getBM(
+  attributes = c("ensembl_gene_id", "mgi_symbol", "external_gene_name"),
+  filters = "ensembl_gene_id",
+  values = clean_ensmusg,
+  mart = mart
+)
+
+lookup <- gene_mapping$mgi_symbol
+names(lookup) <- gene_mapping$ensembl_gene_id
+
+# Use external_gene_name if mgi_symbol is empty
+empty_mgi <- is.na(gene_mapping$mgi_symbol) | gene_mapping$mgi_symbol == ""
+lookup[gene_mapping$ensembl_gene_id[empty_mgi]] <- gene_mapping$external_gene_name[empty_mgi]
+
+final_gene_names <- lookup[clean_ensmusg]
+
+# Use original names for missing/empty cases
+missing_or_empty <- is.na(final_gene_names) | final_gene_names == "" | final_gene_names == " "
+final_gene_names[missing_or_empty] <- current_genes[missing_or_empty]
+
+# Remove any remaining empty strings (safety)
+final_gene_names[final_gene_names == "" | is.na(final_gene_names)] <- paste0("Unknown_", seq_along(final_gene_names[final_gene_names == "" | is.na(final_gene_names)]))
+
+# Make names unique
+final_gene_names <- make.unique(as.character(final_gene_names))
+
+# Final check
+cat("Checking for empty gene names:\n")
+cat("Empty strings:", sum(final_gene_names == ""), "\n")
+cat("NA values:", sum(is.na(final_gene_names)), "\n")
+cat("First 10 final names:", head(final_gene_names, 10), "\n")
+
+cat("Updating gene names in Seurat v5 object...\n")
+
+if (!inherits(pv[["RNA"]], "Assay5")) {
+  pv[["RNA"]] <- as(pv[["RNA"]], "Assay5")
+}
+
+# Get the assay
+rna_assay <- pv[["RNA"]]
+
+# Update counts layer
+if("counts" %in% names(rna_assay@layers)) {
+  rownames(rna_assay@layers$counts) <- final_gene_names
+  cat("Updated counts layer\n")
+}
+
+# Update data layer  
+if("data" %in% names(rna_assay@layers)) {
+  rownames(rna_assay@layers$data) <- final_gene_names
+  cat("Updated data layer\n")
+}
+
+# Update scale.data layer if present
+if("scale.data" %in% names(rna_assay@layers)) {
+  old_scale_names <- rownames(rna_assay@layers$scale.data)
+  if(length(old_scale_names) > 0) {
+    scale_indices <- match(old_scale_names, current_genes)
+    new_scale_names <- final_gene_names[scale_indices[!is.na(scale_indices)]]
+    rownames(rna_assay@layers$scale.data) <- new_scale_names
+    cat("Updated scale.data layer\n")
+  }
+}
+
+rownames(rna_assay) <- final_gene_names   # CRITICAL update
+
+# Put the updated assay back
+pv[["RNA"]] <- rna_assay
+
+# Update variable features
+if(length(VariableFeatures(pv)) > 0) {
+  old_var_features <- VariableFeatures(pv)
+  var_indices <- match(old_var_features, current_genes)
+  new_var_features <- final_gene_names[var_indices[!is.na(var_indices)]]
+  VariableFeatures(pv) <- new_var_features
+  cat("Updated", length(new_var_features), "variable features\n")
+}
+
+cat("\nConversion completed!\n")
+cat("New gene names (first 10):", head(rownames(pv), 10), "\n")
+cat("Total genes in object:", nrow(pv), "\n")
+
+cat("\nConversion summary:\n")
+cat("Total genes:", length(final_gene_names), "\n")
+cat("Successfully converted:", sum(!missing_or_empty), "\n")
+cat("Kept as original:", sum(missing_or_empty), "\n")
+
+# --- Create the copy ---
+pv_symbols <- pv  # Duplicate the updated object
+Idents(pv_symbols) <- "seurat_clusters"
+unique(Idents(pv_symbols))
+
