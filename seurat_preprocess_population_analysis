@@ -1,0 +1,1802 @@
+##### Install dependencies and libraries -------------
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("ReactomePA", force=TRUE)
+BiocManager::install("speckle")
+BiocManager::install("biomaRt")
+BiocManager::install("msigdbr")
+BiocManager::install("GSEABase")
+
+#remove.packages("pheatmap")
+install.packages("pheatmap")
+
+
+install.packages("extrafont")
+
+# Load the library
+library(extrafont)
+
+# Import system fonts (this may take a few minutes)
+# You only need to run this command once per machine
+# font_import()
+
+# Load the imported fonts for the current R session
+loadfonts()
+
+
+
+library(Seurat)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(dplyr)
+library(clusterProfiler)
+library(patchwork)
+library(ggplot2)
+library(CellChat)
+library(circlize)
+library(NMF)
+library(ggalluvial)
+library(patchwork)  # for `+` operator combining plots
+library(reticulate)
+library(future)
+library(pheatmap)
+library(grid)
+library(gtools)
+library(pals)
+library(tidyr)
+library(reshape2)
+library(stringr)
+library(purrr)
+library(readr)
+library(tibble)
+library(scales)
+library(RColorBrewer)
+library(gridtext)
+library(DOSE)                 # Disease Ontology (DO)
+
+
+
+library("ReactomePA")
+library(speckle)
+library(biomaRt)
+library(msigdbr)
+library(GSEABase)
+
+
+library(pheatmap)
+library(ComplexHeatmap)
+
+#py_install("umap-learn")
+options(stringsAsFactors = FALSE)
+
+##### Copy pv_symbols from the big dataset and process it -----------
+# Create the cortical data and sort the clusters alphanumerically
+# Create a copy of pv_symbols then copy seurat_clusters to a new column called "original_clusters"
+pv_symbols_copy <- pv_symbols
+pv_symbols_copy$original_clusters <- pv_symbols_copy$seurat_clusters
+
+#Subset the cortical areas
+pv_cortical <- subset(pv_symbols_copy, subset = Architecture == "Cortical")
+DimPlot(pv_cortical, reduction = "umap")        # Shows the UMAP plot for the "Cortical" cells[9]
+
+# After subsetting, e.g., pv_cortical already created
+pv_cortical <- NormalizeData(pv_cortical)              # Re-normalize[6]
+pv_cortical <- FindVariableFeatures(pv_cortical)       # Redetect variable features[9]
+pv_cortical <- ScaleData(pv_cortical)                  # Rescale data[9]
+pv_cortical <- RunPCA(pv_cortical)                     # Run PCA[9]
+pv_cortical <- FindNeighbors(pv_cortical, dims = 1:10) # Find neighbors[9]
+pv_cortical <- FindClusters(pv_cortical)               # Cluster cells[9]
+pv_cortical <- RunUMAP(pv_cortical, dims = 1:10)       # Recalculate UMAP[9][20]
+DimPlot(pv_cortical, reduction = "umap")               # Plot newly calculated UMAP[20]
+
+levels(Idents(pv_cortical))
+Idents(pv_cortical) <- pv_cortical$original_clusters
+unique(pv_cortical$original_clusters)
+
+# Define your desired order (example - adjust as needed)
+desired_order_cortical <- c(
+  "Cluster 0 - GABAergic interneuron",
+  "Cluster 1 - Layer 5/6 glutamatergic neurons",
+  "Cluster 2 - Layer 4 sensory processing neurons (Cux1+/Rorb+)",
+  "Cluster 3 - Layer 5 parietal glutamatergic neuron (Cux1+/Lamp5+)",
+  "Cluster 4 - Astrocytes",
+  "Cluster 5 - Fast-transmitting glutamatergic neurons (Cux1+/Satb2+)",
+  "Cluster 6 - Layer 6 glutamatergic neurons (Tbr1+/Ctip2+)",
+  "Cluster 7 - Layer 5 corticofugal projection neurons",
+  "Cluster 8 - Cortical PV interneurons",
+  "Cluster 9 - Oligodendrocyte progenitor cells",
+  "Cluster 10 - Mature oligodendrocytes",
+  "Cluster 11 - Leptomeningeal fibroblasts",
+  "Cluster 12 - Microglia",
+  "Cluster 13 - Myelinating oligodendrocytes",
+  "Cluster 14 - Layer 5-6 glutamatergic neurons (hypothalamic connectivity)",
+  "Cluster 15 - Layer 5 glutamatergic neurons (Tshz2+) (SC projecting)",
+  "Cluster 16 - Pvalb+ SC interneurons",
+  "Cluster 17 - Visual processing modulatory neurons (superficial SC)",
+  "Cluster 18 - Vascular leptomeningeal cells",
+  "Cluster 19 - Multisensory integration neurons (intermediate SC)",
+  "Cluster 20 - Meningeal fibroblasts",
+  "Cluster 21 - Sensorimotor integration neurons (intermediate-deep SC)",
+  "Cluster 22 - SC GABAergic neurons",
+  "Cluster 23 - Meis2+ sensorimotor integration neurons",
+  "Cluster 25 - Sensory integration interneurons (dopaminergic input)"
+)
+
+# Reorder the factor levels
+pv_cortical$original_clusters <- factor(pv_cortical$original_clusters, levels = desired_order_cortical)
+Idents(pv_cortical) <- pv_cortical$original_clusters
+
+DimPlot(pv_cortical, reduction = "umap", label=TRUE)
+
+# Remove clusters with less than 20 cell (or fewer than desired minimum)
+cluster_sizes <- table(Idents(pv_cortical))
+print(cluster_sizes)
+clusters_to_keep <- names(cluster_sizes)[cluster_sizes > 19]  # Keep clusters with >1 cell
+pv_cortical_filtered <- subset(pv_cortical, idents = clusters_to_keep)
+
+levels(Idents(pv_cortical_filtered))
+
+
+
+# Per cluster, find up and downregulated marker genes for annotation --------------
+all_markers_cortical <- FindAllMarkers(pv_cortical_filtered,
+                              min.pct = 0.25,          # Gene must be detected in ≥25% cells
+                              logfc.threshold = 0.25,  # Minimum fold change threshold
+                              only.pos = FALSE,         # Keep both upregulated and downregulated markers
+                              test.use = "wilcox"      # Default Wilcoxon Rank Sum test
+)
+
+# Find the top 50 up and downregulated genes and write it into a file per cluster
+clusters <- unique(all_markers_cortical$cluster)
+
+for (clust in clusters) {
+  cluster_df <- all_markers_cortical %>% filter(cluster == clust)
+  
+  top_up <- cluster_df %>%
+    filter(avg_log2FC > 0) %>%
+    slice_max(order_by = avg_log2FC, n = 50)
+  
+  top_down <- cluster_df %>%
+    filter(avg_log2FC < 0) %>%
+    slice_min(order_by = avg_log2FC, n = 50)
+  
+  top_genes <- bind_rows(top_up, top_down)
+  
+  # Clean the cluster name for filename
+  clean_name <- gsub("[^A-Za-z0-9_-]", "_", clust)  # Replace special chars with underscore
+  clean_name <- gsub("_{2,}", "_", clean_name)       # Replace multiple underscores with single
+  clean_name <- gsub("_$", "", clean_name)           # Remove trailing underscore
+  
+  write.csv(top_genes, file = paste0("cortical_cluster_", clean_name, "_top_genes.csv"), row.names = FALSE)
+}
+
+levels(Idents(pv_cortical_filtered))
+DimPlot(pv_cortical_filtered, reduction = "umap", label=TRUE)
+
+
+# Subcluster the 'rough-looking' clusters ad hoc ------------------
+# GABAergic neurons
+pv_cortical_subclustered <- FindSubCluster(
+  pv_cortical_filtered,
+  cluster = c("Cluster 0 - GABAergic interneuron"),      
+  graph.name = "RNA_snn",
+  subcluster.name = "sub.cluster", 
+  resolution = 0.005
+)
+
+# View the results
+DimPlot(pv_cortical_subclustered, group.by = "sub.cluster", label = TRUE, repel =TRUE) + 
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 3)))
+
+#2. Inspect the raw sub.cluster values
+unique(pv_cortical_subclustered$sub.cluster)
+#> e.g. "0" "1" "2"
+
+# 3. Convert to factor with the levels you want (here we keep the order returned)
+pv_cortical_subclustered$sub.cluster <- factor(
+  pv_cortical_subclustered$sub.cluster,
+  levels = sort(unique(pv_cortical_subclustered$sub.cluster))
+)
+
+# 4. Reassign Idents to the factor
+Idents(pv_cortical_subclustered) <- pv_cortical_subclustered$sub.cluster
+
+# 5. Confirm that levels now exist
+levels(Idents(pv_cortical_subclustered))
+#> "0" "1" "2"
+
+# See what subclusters were created
+table(pv_cortical_subclustered$sub.cluster)
+pv_cortical_filtered <- pv_cortical_subclustered
+Idents(pv_cortical_filtered) <- pv_cortical_filtered$sub.cluster
+table(pv_cortical_filtered$sub.cluster)
+
+# Corticofugal projection neurons
+pv_cortical_subcluster2 <- FindSubCluster(
+  pv_cortical_filtered,
+  cluster = c("Cluster 7 - Layer 5 corticofugal projection neurons"),      
+  graph.name = "RNA_snn",
+  subcluster.name = "sub.cluster", 
+  resolution = 0.01
+)
+
+# View the results
+DimPlot(pv_cortical_subcluster2, group.by = "sub.cluster", label = TRUE, repel =TRUE) + 
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 3)))
+
+#2. Inspect the raw sub.cluster values
+unique(pv_cortical_subcluster2$sub.cluster)
+#> e.g. "0" "1" "2"
+
+# 3. Convert to factor with the levels you want (here we keep the order returned)
+pv_cortical_subcluster2$sub.cluster <- factor(
+  pv_cortical_subcluster2$sub.cluster,
+  levels = sort(unique(pv_cortical_subcluster2$sub.cluster))
+)
+
+# 4. Reassign Idents to the factor
+Idents(pv_cortical_subcluster2) <- pv_cortical_subcluster2$sub.cluster
+
+# 5. Confirm that levels now exist
+levels(Idents(pv_cortical_subcluster2))
+#> "0" "1" "2"
+
+# See what subclusters were created
+table(pv_cortical_subcluster2$sub.cluster)
+pv_cortical_filtered <- pv_cortical_subcluster2
+Idents(pv_cortical_filtered) <- pv_cortical_subcluster2$sub.cluster
+table(pv_cortical_filtered$sub.cluster)
+
+# Corticospinal neurons
+pv_cortical_subcluster3 <- FindSubCluster(
+  pv_cortical_filtered,
+  cluster = c("Cluster 15 - Layer 5 glutamatergic neurons (Tshz2+) (SC projecting)"),      
+  graph.name = "RNA_snn",
+  subcluster.name = "sub.cluster", 
+  resolution = 0.008
+)
+
+# View the results
+DimPlot(pv_cortical_subcluster3, group.by = "sub.cluster", label = TRUE, repel =FALSE) + 
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 3)))
+
+#2. Inspect the raw sub.cluster values
+unique(pv_cortical_subcluster3$sub.cluster)
+#> e.g. "0" "1" "2"
+
+# 3. Convert to factor with the levels you want (here we keep the order returned)
+pv_cortical_subcluster3$sub.cluster <- factor(
+  pv_cortical_subcluster3$sub.cluster,
+  levels = sort(unique(pv_cortical_subcluster3$sub.cluster))
+)
+
+# 4. Reassign Idents to the factor
+Idents(pv_cortical_subcluster3) <- pv_cortical_subcluster3$sub.cluster
+
+# 5. Confirm that levels now exist
+levels(Idents(pv_cortical_subcluster3))
+#> "0" "1" "2"
+
+# See what subclusters were created
+table(pv_cortical_subcluster3$sub.cluster)
+pv_cortical_filtered <- pv_cortical_subcluster3
+Idents(pv_cortical_filtered) <- pv_cortical_subcluster3$sub.cluster
+table(pv_cortical_filtered$sub.cluster)
+
+# Remove clusters with less than 20 cell (or fewer than desired minimum)
+cluster_sizes <- table(Idents(pv_cortical_filtered))
+print(cluster_sizes)
+clusters_to_keep <- names(cluster_sizes)[cluster_sizes > 19]  # Keep clusters with >19 cell
+pv_cortical_filtered <- subset(pv_cortical_filtered, idents = clusters_to_keep)
+
+DimPlot(pv_cortical_filtered, group.by = "sub.cluster", label = TRUE, repel =TRUE) + 
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 3)))
+
+levels(Idents(pv_cortical_filtered))
+
+
+# Define your desired order -------------
+desired_order_cortical <- c(
+  "Cluster 0 - GABAergic interneuron_0",
+  "Cluster 0 - GABAergic interneuron_1",
+  "Cluster 1 - Layer 5/6 glutamatergic neurons",
+  "Cluster 2 - Layer 4 sensory processing neurons (Cux1+/Rorb+)",
+  "Cluster 3 - Layer 5 parietal glutamatergic neuron (Cux1+/Lamp5+)",
+  "Cluster 4 - Astrocytes",
+  "Cluster 5 - Fast-transmitting glutamatergic neurons (Cux1+/Satb2+)",
+  "Cluster 6 - Layer 6 glutamatergic neurons (Tbr1+/Ctip2+)",
+  "Cluster 7 - Layer 5 corticofugal projection neurons_0",
+  "Cluster 7 - Layer 5 corticofugal projection neurons_1",
+  "Cluster 8 - Cortical PV interneurons",
+  "Cluster 9 - Oligodendrocyte progenitor cells",
+  "Cluster 10 - Mature oligodendrocytes",
+  "Cluster 11 - Leptomeningeal fibroblasts",
+  "Cluster 12 - Microglia",
+  "Cluster 13 - Myelinating oligodendrocytes",
+  "Cluster 14 - Layer 5-6 glutamatergic neurons (hypothalamic connectivity)",
+  "Cluster 15 - Layer 5 glutamatergic neurons (Tshz2+) (SC projecting)_0",
+  "Cluster 15 - Layer 5 glutamatergic neurons (Tshz2+) (SC projecting)_1",
+  "Cluster 15 - Layer 5 glutamatergic neurons (Tshz2+) (SC projecting)_2",
+  "Cluster 16 - Pvalb+ SC interneurons",
+  "Cluster 17 - Visual processing modulatory neurons (superficial SC)",
+  "Cluster 18 - Vascular leptomeningeal cells",
+  "Cluster 20 - Meningeal fibroblasts",
+  "Cluster 21 - Sensorimotor integration neurons (intermediate-deep SC)",
+  "Cluster 22 - SC GABAergic neurons",
+  "Cluster 23 - Meis2+ sensorimotor integration neurons",
+  "Cluster 25 - Sensory integration interneurons (dopaminergic input)"
+)
+
+# 2. Convert sub.cluster to a factor with your specified level order
+pv_cortical_filtered$sub.cluster <- factor(
+  pv_cortical_filtered$sub.cluster,
+  levels = desired_order_cortical
+)
+
+# 3. Reassign Idents to use the newly ordered factor
+Idents(pv_cortical_filtered) <- pv_cortical_filtered$sub.cluster
+
+# 4. Verify the new ordering
+table(Idents(pv_cortical_filtered))
+
+DimPlot(pv_cortical_filtered, reduction = "umap", label=TRUE) + 
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 3)))
+
+
+# Find markers again for the new clusters to annotate ---------
+# Get all unique cluster identities from the Seurat object
+all_clusters <- levels(Idents(pv_cortical_filtered))
+
+cat("Found", length(all_clusters), "clusters in the dataset:\n")
+cat(paste(all_clusters, collapse = "\n"), "\n\n")
+
+# Initialize empty list to store results
+all_markers_list <- list()
+
+# Find markers for each cluster
+for (cluster in all_clusters) {
+  cat("Processing cluster:", cluster, "\n")
+  
+  # Find markers for current cluster vs all other cells
+  cluster_markers <- FindMarkers(
+    pv_cortical_filtered,
+    ident.1 = cluster,
+    min.pct = 0.1,           # Only test genes that are detected in at least 10% of cells
+    logfc.threshold = 0.25,  # Only test genes that show at least 0.25 log-fold difference
+    test.use = "wilcox"      # Use Wilcoxon rank sum test
+  )
+  
+  # Add gene names as a column
+  cluster_markers$gene <- rownames(cluster_markers)
+  
+  # Add cluster information
+  cluster_markers$cluster <- cluster
+  
+  # Sort by average log fold change (avg_log2FC)
+  cluster_markers <- cluster_markers[order(-cluster_markers$avg_log2FC), ]
+  
+  # Get top 50 upregulated genes (positive avg_log2FC)
+  upregulated <- cluster_markers[cluster_markers$avg_log2FC > 0, ][1:50, ]
+  upregulated <- upregulated[!is.na(upregulated$gene), ]  # Remove NA rows if less than 50 genes
+  upregulated$regulation <- "upregulated"
+  
+  # Get top 50 downregulated genes (negative avg_log2FC)
+  downregulated <- cluster_markers[cluster_markers$avg_log2FC < 0, ]
+  downregulated <- downregulated[order(downregulated$avg_log2FC), ]  # Sort by most negative first
+  downregulated <- downregulated[1:50, ]
+  downregulated <- downregulated[!is.na(downregulated$gene), ]  # Remove NA rows if less than 50 genes
+  downregulated$regulation <- "downregulated"
+  
+  # Combine up and downregulated genes
+  cluster_results <- rbind(upregulated, downregulated)
+  
+  # Add to main list
+  all_markers_list[[cluster]] <- cluster_results
+  
+  cat("  - Found", nrow(upregulated), "upregulated and", nrow(downregulated), "downregulated genes\n")
+}
+
+# Combine all results into one dataframe
+final_results <- do.call(rbind, all_markers_list)
+
+# Reorder columns for better readability
+final_results <- final_results[, c("cluster", "gene", "regulation", "avg_log2FC", 
+                                   "pct.1", "pct.2", "p_val", "p_val_adj")]
+
+# Write to CSV file
+write.csv(final_results, "all_clusters_markers_top50_up_down.csv", row.names = FALSE)
+
+# Print summary
+cat("\n=== ANALYSIS COMPLETE ===\n")
+cat("Total clusters analyzed:", length(all_clusters), "\n")
+cat("Total genes analyzed:", nrow(final_results), "\n")
+cat("Results saved to: all_clusters_markers_top50_up_down.csv\n")
+
+# Summary by cluster
+cluster_summary <- final_results %>%
+  group_by(cluster, regulation) %>%
+  summarise(gene_count = n(), .groups = 'drop') %>%
+  pivot_wider(names_from = regulation, values_from = gene_count, values_fill = 0)
+
+cat("\nSummary by cluster:\n")
+print(cluster_summary)
+
+# Display first few rows
+cat("\nFirst 10 rows of results:\n")
+print(head(final_results, 10))
+
+
+
+# Re-name clusters to final annotations  ---------------------
+# 1. Create a named vector mapping old to new names
+new_names <- c(
+  "Cluster 0 - GABAergic interneuron_0" = "SST+ interneurons",
+  "Cluster 0 - GABAergic interneuron_1" = "VIP+ interneurons",
+  "Cluster 1 - Layer 5/6 glutamatergic neurons" = "Layer 5/6 IT neurons",
+  "Cluster 2 - Layer 4 sensory processing neurons (Cux1+/Rorb+)" = "Layer 4 sensory neurons",
+  "Cluster 3 - Layer 5 parietal glutamatergic neuron (Cux1+/Lamp5+)" = "Layer 5a IT neurons",
+  "Cluster 4 - Astrocytes" = "Astrocytes",
+  "Cluster 5 - Fast-transmitting glutamatergic neurons (Cux1+/Satb2+)" = "Layer 2/3 IT neurons",
+  "Cluster 6 - Layer 6 glutamatergic neurons (Tbr1+/Ctip2+)" = "Layer 6 corticothalamic neurons",
+  "Cluster 7 - Layer 5 corticofugal projection neurons_0" = "Layer 5b PT neurons",
+  "Cluster 7 - Layer 5 corticofugal projection neurons_1" = "Atypical excitatory neurons",
+  "Cluster 8 - Cortical PV interneurons" = "PV+ interneurons",
+  "Cluster 9 - Oligodendrocyte progenitor cells" = "Oligodendrocyte precursor cells",
+  "Cluster 10 - Mature oligodendrocytes" = "Myelinating oligodendrocytes",
+  "Cluster 11 - Leptomeningeal fibroblasts" = "Leptomeningeal cells",
+  "Cluster 12 - Microglia" = "Microglia",
+  "Cluster 13 - Myelinating oligodendrocytes" = "Newly mature oligodendrocytes",
+  "Cluster 14 - Layer 5-6 glutamatergic neurons (hypothalamic connectivity)" = "Deep-layer extratelencephalic neurons",
+  "Cluster 15 - Layer 5 glutamatergic neurons (Tshz2+) (SC projecting)_0" = "Corticospinal neurons (Type I)",
+  "Cluster 15 - Layer 5 glutamatergic neurons (Tshz2+) (SC projecting)_1" = "Corticospinal neurons (Type II)",
+  "Cluster 15 - Layer 5 glutamatergic neurons (Tshz2+) (SC projecting)_2" = "Corticospinal neurons (Type III)",
+  "Cluster 18 - Vascular leptomeningeal cells" = "Endothelial cells",
+  "Cluster 20 - Meningeal fibroblasts" = "Meningeal fibroblasts",
+  "Cluster 23 - Meis2+ sensorimotor integration neurons" = "Meis2+ neurons"
+)
+
+# 1. Create your named list of old → new names
+new_names_list <- as.list(new_names)
+
+# 2. Call RenameIdents via do.call()
+pv_cortical_filtered <- do.call(
+  RenameIdents,
+  c(list(object = pv_cortical_filtered), new_names_list)
+)
+
+# 3. (Optional) Update metadata
+pv_cortical_filtered$sub.cluster <- Idents(pv_cortical_filtered)
+
+# 4. Verify
+table(Idents(pv_cortical_filtered))
+levels(Idents(pv_cortical_filtered))
+
+# Remove clusters with less than 50 cells (or fewer than desired minimum) -----
+cluster_sizes <- table(Idents(pv_cortical_filtered))
+print(cluster_sizes)
+clusters_to_keep <- names(cluster_sizes)[cluster_sizes > 49]  # Keep clusters with >19 cell
+pv_cortical_filtered <- subset(pv_cortical_filtered, idents = clusters_to_keep)
+
+DimPlot(pv_cortical_filtered, group.by = "sub.cluster", label = TRUE, repel =TRUE) + 
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 3)))
+
+levels(Idents(pv_cortical_filtered))
+
+
+# Define your final order  -------------
+desired_order_cortical_final <- c(
+  "Layer 2/3 IT neurons",
+  "Layer 4 sensory neurons", 
+  "Layer 5a IT neurons",
+  "Layer 5b PT neurons",
+  "Layer 5/6 IT neurons",
+  "Layer 6 corticothalamic neurons",
+  "Deep-layer extratelencephalic neurons",
+  "Corticospinal neurons (Type I)",
+  "Corticospinal neurons (Type II)",
+  "Atypical excitatory neurons",
+  "PV+ interneurons",
+  "SST+ interneurons",
+  "VIP+ interneurons",
+  "Astrocytes",
+  "Oligodendrocyte precursor cells",
+  "Newly mature oligodendrocytes",
+  "Myelinating oligodendrocytes",
+  "Microglia",
+  "Endothelial cells",
+  "Leptomeningeal cells",
+  "Meningeal fibroblasts"
+)
+
+# Set new identity
+Idents(pv_cortical_filtered) <- factor(
+  Idents(pv_cortical_filtered),
+  levels = desired_order_cortical_final
+)
+
+# Verify the new ordering
+table(Idents(pv_cortical_filtered))
+
+DimPlot(pv_cortical_filtered, reduction = "umap", label=TRUE, repel=TRUE) + 
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 3)))
+
+
+##### Marker gene visualization ----------------
+# Find marker genes
+all_markers_cortical <- FindAllMarkers(pv_cortical_filtered,
+                                       min.pct = 0.25,          # Gene must be detected in ≥25% cells
+                                       logfc.threshold = 0.25,  # Minimum fold change threshold
+                                       only.pos = FALSE,         # Keep both upregulated and downregulated markers
+                                       test.use = "wilcox"      # Default Wilcoxon Rank Sum test
+)
+# Dot blot with top 10 marker genes
+top10_markers <- all_markers_cortical %>%
+  group_by(cluster) %>%
+  filter(p_val_adj < 0.05) %>%  # Adjusted p-value cutoff
+  filter(!grepl("^ENSMUSG", gene)) %>% 
+  slice_max(avg_log2FC, n = 10) %>%
+  pull(gene) %>%                        # Extract gene names
+  unique() 
+
+
+p <- DotPlot(pv_cortical_filtered, 
+             features = top10_markers,
+             dot.scale = 3,
+             col.min = -1.5,                       # Set color scale limits
+             col.max = 2.5
+)
+
+p + theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1, face="italic"))
+
+
+# Dot blot with top 5 marker genes
+top5_markers <- all_markers_cortical %>%
+  group_by(cluster) %>%
+  filter(p_val_adj < 0.05) %>%  # Adjusted p-value cutoff
+  filter(!grepl("^ENSMUSG", gene)) %>% 
+  slice_max(avg_log2FC, n = 5) %>%
+  pull(gene) %>%                        # Extract gene names
+  unique() 
+
+
+p <- DotPlot(pv_cortical_filtered, 
+             features = top5_markers,
+             dot.scale = 3,
+             col.min = -1.5,                       # Set color scale limits
+             col.max = 2.5
+)
+
+pdf("top5_markers_with_lncRNAs.pdf", width = 30, height = 10, "in")
+p + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, face="italic"))
+dev.off()
+
+# With lncRNAs
+png("top5_markers_with_lncRNAs.png", width = 30, height = 10, units = "in", res = 300, type = "quartz")
+print(p + theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust = 1, face = "italic")))
+dev.off()
+
+ # Dot blot with top 5 marker genes without Gms
+top5_markers_nogm_norik <- all_markers_cortical %>%
+  group_by(cluster) %>%
+  filter(p_val_adj < 0.05) %>%  # Adjusted p-value cutoff
+  filter(!grepl("^ENSMUSG", gene)) %>% 
+  filter(!grepl("^Gm", gene)) %>% 
+  filter(!grepl("Rik$", gene)) %>%
+  slice_max(avg_log2FC, n = 5) %>%
+  pull(gene) %>%                        # Extract gene names
+  unique() 
+
+
+p <- DotPlot(pv_cortical_filtered, 
+             features = top5_markers_nogm_norik,
+             dot.scale = 3,
+             col.min = -1.5,                       # Set color scale limits
+             col.max = 2.5
+)
+
+pdf("top5_markers_without_gms_riks.pdf", width = 30, height = 10, "in")
+p + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, face="italic"))
+dev.off()
+
+
+
+# Without Gm/Rik genes
+png("top5_markers_without_gms_riks.png", width = 30, height = 10, units = "in", res = 300, type = "quartz")
+print(p + theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust = 1, face = "italic")))
+dev.off()
+
+
+
+#### Select gene dot blot marker with adjustable color palette ------
+# Libraries
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+
+# Curated mouse-case gene panels (MGI style: first letter uppercase, rest lowercase)
+# 20-gene panel (replace Gfap -> Scnn1a)
+genes_20_mouse <- c(
+  # Pan-neuronal, excitatory, inhibitory
+  "Snap25","Slc17a7","Gad1",
+  # Excitatory / laminar
+  "Cux2","Rorb","Fezf2","Tle4","Scnn1a",
+  # Interneurons
+  "Pvalb","Sst","Vip", "Reln",
+  # Oligodendrocyte lineage
+  "Pdgfra","Anln","Mbp",
+  # Astrocytes
+  "Aqp4",
+  # Microglia
+  "P2ry12","Tmem119",
+  # Endothelial
+  "Pecam1","Vwf",
+  # Meningeal
+  "Foxc1","Dcn","Col1a1"
+)
+
+# 33-gene panel (30 original + 3 new)
+genes_30_mouse <- c(
+  # Pan-neuronal, excitatory, inhibitory
+  "Snap25","Slc17a7","Gad1",
+  # Excitatory / laminar
+  "Cux2","Satb2","Rorb","Scnn1a","Pcp4","Fezf2","Bcl11b","Tle4","Foxp2",
+  # Interneurons
+  "Pvalb","Sst","Vip","Npy", "Reln",
+  # Oligodendrocyte lineage
+  "Pdgfra","Cspg4","Anln","Mbp","Mog","Plp1",
+  # Astrocytes
+  "Aqp4","Gfap","Slc1a2",
+  # Microglia
+  "P2ry12","Tmem119","Cx3cr1",
+  # Endothelial
+  "Pecam1","Vwf","Flt1",
+  # Meningeal
+  "Foxc1","Col1a1"
+)
+
+# Robust case-insensitive matching to features present in the Seurat object
+all_features <- rownames(pv_cortical_filtered[["RNA"]])
+
+match_to_features <- function(gvec, features) {
+  lut <- setNames(features, toupper(features))         # map UPPER -> original
+  matched <- lut[toupper(gvec)]
+  unique(unname(matched[!is.na(matched)]))
+}
+
+features_20 <- match_to_features(genes_20_mouse, all_features)
+features_30 <- match_to_features(genes_30_mouse, all_features)
+
+# Optional: report any genes not found
+missing_report <- function(requested, matched) {
+  req_up <- toupper(requested)
+  feat_up <- toupper(all_features)
+  missing <- requested[!(req_up %in% feat_up)]
+  if (length(missing) > 0) message("Not found: ", paste(missing, collapse = ", "))
+}
+missing_report(genes_20_mouse, features_20)
+missing_report(genes_30_mouse, features_30)
+
+# Define a blue gradient centered on #2166ac
+# Light -> medium -> dark blues (ColorBrewer-like), including #2166ac
+pal_blues <- colorRampPalette(c(
+  "#f7fbff", "#deebf7", "#c6dbef", "#9ecae1",
+  "#6baed6", "#4292c6", "#2171b5", "#2166ac", "#084594"
+))(100)
+
+# Keep your clipping consistent across DotPlot and the scale
+cmin <- -1.5
+cmax <- 2.5
+
+# DotPlot: 20-gene panel
+p20 <- DotPlot(
+  pv_cortical_filtered,
+  features = features_20,
+  dot.scale = 3,
+  col.min = cmin,
+  col.max = cmax
+) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, face = "italic")) +
+  labs(title = "Marker panel") +
+  scale_colour_gradientn(
+    colours = pal_blues,
+    limits = c(cmin, cmax),
+    oob = scales::squish,
+    name = "Avg exp (scaled)"
+  )
+
+# DotPlot: 30-gene panel
+p30 <- DotPlot(
+  pv_cortical_filtered,
+  features = features_30,
+  dot.scale = 3,
+  col.min = cmin,
+  col.max = cmax
+) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, face = "italic")) +
+  labs(title = "Marker panel") +
+  scale_colour_gradientn(
+    colours = pal_blues,
+    limits = c(cmin, cmax),
+    oob = scales::squish,
+    name = "Avg exp (scaled)"
+  )
+
+# Render or save
+print(p20)
+print(p30)
+
+ggsave("dotplot_20.png", p20, width = 10, height = 6, dpi = 300)
+ggsave("dotplot_30.png", p30, width = 12, height = 6, dpi = 300)
+
+#### Differential gene expression with volcano plots without ENSMUSG genes (SAVE AS PDF) ----
+output_dir <- "DE_results_volcano_filtered"
+if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+# Subfolders for plots
+plot_dir_top10 <- file.path(output_dir, "volcano_top10_labeled")
+plot_dir_sig   <- file.path(output_dir, "volcano_significant_labeled")
+plot_dir_clean <- file.path(output_dir, "volcano_clean")
+dir.create(plot_dir_top10, showWarnings = FALSE, recursive = TRUE)
+dir.create(plot_dir_sig,   showWarnings = FALSE, recursive = TRUE)
+dir.create(plot_dir_clean, showWarnings = FALSE, recursive = TRUE)
+
+# Load required libraries
+library(ggplot2)
+library(ggrepel)
+
+# Parameters
+wt_label  <- "PV-Cre/tdTom"
+ko_label  <- "PV-Cre/tdTom/Dnmt1 loxP2"
+logfc_thr <- 0.26
+padj_thr  <- 0.05
+
+# Check metadata
+table(pv_cortical_filtered$Genotype)
+
+# Clusters to iterate
+clusters <- levels(pv_cortical_filtered)
+
+# Helper: sanitize cluster id for filenames
+sanitize_id <- function(x) gsub("[^A-Za-z0-9_]", "_", x)
+
+# Helper: build volcano plot with different labeling modes
+build_volcano <- function(de, clust, label_mode = c("top10", "signif", "none")) {
+  label_mode <- match.arg(label_mode)
+  
+  # Base label column
+  de$label <- ""
+  
+  # Determine which genes to label
+  if (label_mode == "top10") {
+    # Masks for significant UP and DOWN based on thresholds
+    is_up   <- (de$avg_log2FC >= logfc_thr) & (de$p_val_adj < padj_thr)
+    is_down <- (de$avg_log2FC <= -logfc_thr) & (de$p_val_adj < padj_thr)
+    
+    # Safety: enforce disjoint sets
+    if (any(is_up & is_down, na.rm = TRUE)) {
+      warning("Rows classified as both UP and DOWN; check thresholds/data.")
+      is_down[is_up] <- FALSE
+    }
+    
+    # Top-10 by adjusted p-value within each side (de is pre-sorted by p_val_adj)
+    up_df   <- de[is_up, , drop = FALSE]
+    down_df <- de[is_down, , drop = FALSE]
+    
+    if (nrow(up_df) > 0) {
+      up_df <- head(up_df, 10)
+      de$label[match(up_df$gene, de$gene)] <- up_df$gene
+    }
+    if (nrow(down_df) > 0) {
+      down_df <- head(down_df, 10)
+      de$label[match(down_df$gene, de$gene)] <- down_df$gene
+    }
+  } else if (label_mode == "signif") {
+    de$label[de$diffexpressed != "NO"] <- de$gene
+  } # "none" leaves labels empty
+  
+  # Base plot
+  p <- ggplot(
+    de,
+    aes(x = avg_log2FC, y = neg_log10_padj, color = diffexpressed)
+  ) +
+    geom_point(alpha = 0.6, size = 1.5, show.legend = TRUE) +
+    scale_color_manual(
+      values = c("UP" = "#b2182b", "DOWN" = "#2166ac", "NO" = "grey70"),
+      labels = c("DOWN" = "Downregulated", "NO" = "Not significant", "UP" = "Upregulated")
+    ) +
+    geom_vline(xintercept = c(-logfc_thr, logfc_thr), linetype = "dashed", color = "grey60", linewidth = 0.2) +
+    geom_hline(yintercept = -log10(padj_thr), linetype = "dashed", color = "grey60", linewidth = 0.2) +
+    labs(
+      title = paste0("Cluster ", clust, ": KO vs WT"),
+      x = "Log2 Fold Change",
+      y = "-Log10(Adjusted P-value)",
+      color = "Differential Expression"
+    ) +
+    theme_classic() +
+    theme(
+      plot.title  = element_text(hjust = 0.5, size = 14, face = "bold"),
+      axis.title  = element_text(size = 12),
+      axis.text   = element_text(size = 10),
+      legend.position = "right",
+      axis.line   = element_line(color = "black", linewidth = 0.5)
+    ) +
+    guides(color = guide_legend(override.aes = list(size = 3, alpha = 1)))
+  
+  # Add labels depending on mode
+  if (label_mode == "top10" && any(nzchar(de$label))) {
+    set.seed(123)
+    p <- p +
+      ggrepel::geom_text_repel(
+        aes(label = label),
+        max.overlaps = 20,
+        size = 3,
+        box.padding = 0.5,
+        point.padding = 0.3,
+        show.legend = FALSE,
+        segment.color = "grey30",
+        segment.size  = 0.3,
+        min.segment.length = 0
+      )
+  } else if (label_mode == "signif" && any(nzchar(de$label))) {
+    # Adjacent labels: no connector lines, minimal padding near points
+    set.seed(123)
+    p <- p +
+      ggrepel::geom_text_repel(
+        aes(label = label),
+        max.overlaps = Inf,
+        size = 2.5,
+        box.padding = 0.1,
+        point.padding = 0.1,
+        show.legend = FALSE,
+        segment.color = NA,
+        segment.size  = 0
+      )
+  }
+  p
+}
+
+# Iterate clusters
+for (clust in clusters) {
+  cells  <- WhichCells(pv_cortical_filtered, idents = clust)
+  subobj <- subset(pv_cortical_filtered, cells = cells)
+  Idents(subobj) <- "Genotype"
+  
+  de <- FindMarkers(
+    object = subobj,
+    ident.1 = ko_label,
+    ident.2 = wt_label,
+    min.pct = 0.1,
+    logfc.threshold = logfc_thr
+  )
+  
+  # Ensure gene names
+  de$gene <- rownames(de)
+  
+  # Handle possible older Seurat column name
+  if (!"avg_log2FC" %in% colnames(de) && "avg_logFC" %in% colnames(de)) {
+    de$avg_log2FC <- de$avg_logFC
+  }
+  
+  # Remove Ensembl-like genes starting with ENSMUSG
+  de <- de[!grepl("^ENSMUSG", de$gene, ignore.case = FALSE), , drop = FALSE]
+  
+  # Sort by adjusted p-value
+  if (nrow(de) > 0) {
+    de <- de[order(de$p_val_adj), , drop = FALSE]
+  }
+  
+  # Classification for colors (significance)
+  de$diffexpressed <- "NO"
+  de$diffexpressed[de$avg_log2FC >= logfc_thr & de$p_val_adj < padj_thr] <- "UP"
+  de$diffexpressed[de$avg_log2FC <= -logfc_thr & de$p_val_adj < padj_thr] <- "DOWN"
+  de$diffexpressed <- factor(de$diffexpressed, levels = c("UP", "DOWN", "NO"))
+  
+  # y-axis: -log10 padj, with safe handling for zeros
+  de$neg_log10_padj <- -log10(de$p_val_adj)
+  finite_vals <- de$neg_log10_padj[is.finite(de$neg_log10_padj)]
+  if (length(finite_vals) == 0) finite_vals <- 0
+  max_finite <- max(finite_vals)
+  de$neg_log10_padj[!is.finite(de$neg_log10_padj)] <- max_finite + 10
+  
+  # Write CSV (root output_dir)
+  safe_clust <- sanitize_id(clust)
+  filename_csv <- paste0("cluster_", safe_clust, "_KO_vs_WT_all_genes_filtered.csv")
+  filepath_csv <- file.path(output_dir, filename_csv)
+  write.csv(de, file = filepath_csv, row.names = FALSE)
+  message("Saved filtered DE results for cluster ", clust, " to ", filepath_csv)
+  
+  # Build and save three plot variants
+  # 1) Top-10 per side labeled (with connector lines)
+  p_top10 <- build_volcano(de, clust, label_mode = "top10")
+  ggsave(
+    filename = file.path(plot_dir_top10, paste0("cluster_", safe_clust, "_KO_vs_WT_volcano_top10_filtered.pdf")),
+    plot = p_top10, width = 10, height = 8, units = "in", device = "pdf"
+  )
+  
+  # 2) All significant genes labeled (labels adjacent to points, no lines)
+  p_sig <- build_volcano(de, clust, label_mode = "signif")
+  ggsave(
+    filename = file.path(plot_dir_sig, paste0("cluster_", safe_clust, "_KO_vs_WT_volcano_sig_labeled_filtered.pdf")),
+    plot = p_sig, width = 10, height = 8, units = "in", device = "pdf"
+  )
+  
+  # 3) Clean non-labeled version
+  p_clean <- build_volcano(de, clust, label_mode = "none")
+  ggsave(
+    filename = file.path(plot_dir_clean, paste0("cluster_", safe_clust, "_KO_vs_WT_volcano_clean_filtered.pdf")),
+    plot = p_clean, width = 10, height = 8, units = "in", device = "pdf"
+  )
+}
+
+
+##### Gene ontology analysis (with dot plots)--------
+# Required packages
+suppressPackageStartupMessages({
+  library(clusterProfiler)
+  library(org.Mm.eg.db)
+  library(ReactomePA)
+  library(DOSE)
+  library(ggplot2)
+  library(cowplot)
+  library(RColorBrewer)
+})
+
+# Parameters
+input_dir        <- "DE_results_volcano_filtered"
+output_dir       <- "Enrichment_results"
+p_adj_cut        <- 0.05
+padj_cut_plot    <- 0.05
+top_n            <- 20
+wrap_char_limit  <- 45
+plot_width       <- 9
+plot_height      <- 6
+plot_dpi         <- 600
+panel_rel_width  <- 0.6
+
+# Palette controls
+# palette_choice options: "viridis", "gradient", "gradientn", "brewer", "brewern"
+palette_choice   <- "viridis"
+
+# viridis controls
+viridis_option   <- "viridis"  # "viridis","magma","plasma","inferno","cividis","rocket","mako","turbo"
+viridis_direction<- -1         # reverse = -1, default = 1
+
+# gradient/gradientn controls
+gradient_low     <- "#132B43"
+gradient_high    <- "#56B1F7"
+gradient_cols    <- NULL       # e.g., c("#2166AC","#F7F7F7","#B2182B")
+
+# brewer/brewern controls
+brewer_pal       <- "RdBu"     # e.g., "RdBu","Reds","Blues","PuOr","PRGn", etc.
+brewer_direction <- 1          # 1 or -1 to reverse
+brewer_n         <- 9          # number of colors when using brewern + gradientn
+
+if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+# Enrichment functions
+enrich_funcs <- list(
+  GO_BP = function(gene_ids) {
+    enrichGO(gene          = gene_ids,
+             OrgDb         = org.Mm.eg.db,
+             keyType       = "ENTREZID",
+             ont           = "BP",
+             pAdjustMethod = "BH",
+             pvalueCutoff  = p_adj_cut,
+             qvalueCutoff  = p_adj_cut,
+             readable      = TRUE)
+  },
+  GO_MF = function(gene_ids) {
+    enrichGO(gene          = gene_ids,
+             OrgDb         = org.Mm.eg.db,
+             keyType       = "ENTREZID",
+             ont           = "MF",
+             pAdjustMethod = "BH",
+             pvalueCutoff  = p_adj_cut,
+             qvalueCutoff  = p_adj_cut,
+             readable      = TRUE)
+  },
+  GO_CC = function(gene_ids) {
+    enrichGO(gene          = gene_ids,
+             OrgDb         = org.Mm.eg.db,
+             keyType       = "ENTREZID",
+             ont           = "CC",
+             pAdjustMethod = "BH",
+             pvalueCutoff  = p_adj_cut,
+             qvalueCutoff  = p_adj_cut,
+             readable      = TRUE)
+  },
+  KEGG = function(gene_ids) {
+    enrichKEGG(gene          = gene_ids,
+               organism      = 'mmu',
+               pAdjustMethod = "BH",
+               pvalueCutoff  = p_adj_cut,
+               qvalueCutoff  = p_adj_cut)
+  },
+  Reactome = function(gene_ids) {
+    enrichPathway(gene          = gene_ids,
+                  organism      = "mouse",
+                  pAdjustMethod = "BH",
+                  pvalueCutoff  = p_adj_cut,
+                  qvalueCutoff  = p_adj_cut,
+                  readable      = TRUE)
+  },
+  DO = function(gene_ids) {
+    enrichDO(gene          = gene_ids,
+             ont           = "DO",
+             pAdjustMethod = "BH",
+             pvalueCutoff  = p_adj_cut,
+             qvalueCutoff  = p_adj_cut,
+             readable      = TRUE)
+  }
+)
+
+# Helpers
+compute_fold_enrichment <- function(gene_ratio_chr, bg_ratio_chr) {
+  gr <- do.call(rbind, strsplit(gene_ratio_chr, "/", fixed = TRUE))
+  br <- do.call(rbind, strsplit(bg_ratio_chr,   "/", fixed = TRUE))
+  k <- as.numeric(gr[, 1]); n <- as.numeric(gr[, 2])
+  M <- as.numeric(br[, 1]); N <- as.numeric(br[, 2])
+  (k / n) / (M / N)
+}
+
+wrap_label_by_chars <- function(x, limit = wrap_char_limit) {
+  vapply(x, function(s) {
+    if (nchar(s) <= limit) return(s)
+    left <- gregexpr("\\s", substr(s, 1, limit))[[1]]
+    if (length(left) && any(left > 0)) {
+      cut <- max(left[left > 0])
+      return(paste0(substr(s, 1, cut - 1), "\n", trimws(substr(s, cut + 1, nchar(s)))))
+    }
+    right <- regexpr("\\s", substr(s, limit + 1, nchar(s)))
+    if (right[1] != -1) {
+      cut <- limit + right[1]
+      return(paste0(substr(s, 1, cut - 1), "\n", trimws(substr(s, cut + 1, nchar(s)))))
+    }
+    paste0(substr(s, 1, limit), "\n", substr(s, limit + 1, nchar(s)))
+  }, character(1))
+}
+
+size_breaks_integer <- function(vals, n = 4) {
+  uc <- sort(unique(as.integer(round(vals))))
+  if (length(uc) <= n) return(uc)
+  pr <- pretty(range(uc), n = n)
+  br <- as.integer(round(pr))
+  br <- br[br >= min(uc) & br <= max(uc)]
+  unique(br)
+}
+
+size_labels_integer <- function(x) as.character(as.integer(round(x)))
+
+# Step 1: Enrichment -> CSV (adds NegLog10Padj column)
+run_enrichment_to_csv <- function(in_dir = input_dir, out_dir = output_dir) {
+  csv_files <- list.files(in_dir, pattern = "cluster_.*_all_genes_filtered\\.csv$", full.names = TRUE)
+  for (csv_path in csv_files) {
+    cluster_id <- sub("cluster_(.*)_KO_vs_WT_all_genes_filtered\\.csv$", "\\1", basename(csv_path))
+    de_df      <- read.csv(csv_path, stringsAsFactors = FALSE)
+    genes_sym  <- subset(de_df, p_val_adj <= p_adj_cut)$gene
+    if (length(genes_sym) < 5) {
+      message("Cluster ", cluster_id, ": fewer than 5 significant genes, skipping.")
+      next
+    }
+    tryCatch({
+      gene_map   <- bitr(genes_sym, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
+      entrez_ids <- unique(gene_map$ENTREZID)
+      if (length(entrez_ids) < 3) {
+        message("Cluster ", cluster_id, ": fewer than 3 mapped Entrez IDs, skipping.")
+        next
+      }
+      for (name in names(enrich_funcs)) {
+        tryCatch({
+          ego <- enrich_funcs[[name]](entrez_ids)
+          if (is.null(ego) || is.null(ego@result) || nrow(ego@result) == 0) {
+            message("Cluster ", cluster_id, " - ", name, ": no enriched terms found.")
+            next
+          }
+          res_df <- as.data.frame(ego@result)
+          eps <- .Machine$double.xmin
+          res_df$NegLog10Padj <- if ("p.adjust" %in% names(res_df)) -log10(pmax(as.numeric(res_df$p.adjust), eps)) else NA_real_
+          keep_cols <- intersect(
+            c("ID","Description","GeneRatio","BgRatio","pvalue","p.adjust","qvalue","geneID","Count","NegLog10Padj"),
+            colnames(res_df)
+          )
+          out_df <- res_df[order(res_df$p.adjust, res_df$Description), keep_cols]
+          out_csv <- file.path(out_dir, sprintf("cluster_%s_%s.csv", cluster_id, name))
+          write.csv(out_df, file = out_csv, row.names = FALSE)
+          message("Cluster ", cluster_id, " - ", name, ": results written to ", basename(out_csv))
+        }, error = function(e) {
+          message("Error in ", name, " enrichment for cluster ", cluster_id, ": ", e$message)
+        })
+      }
+    }, error = function(e) {
+      message("Error mapping genes for cluster ", cluster_id, ": ", e$message)
+    })
+  }
+  invisible(TRUE)
+}
+
+# Step 2: CSV -> PNGs with multiple palette options (viridis/gradient/gradientn/brewer/brewner)
+plot_go_from_csv <- function(csv_dir = output_dir,
+                             out_dir = output_dir,
+                             top_n_terms = top_n,
+                             padj_cut = padj_cut_plot,
+                             width = plot_width,
+                             height = plot_height,
+                             dpi = plot_dpi,
+                             panel_width = panel_rel_width,
+                             palette = palette_choice,
+                             viridis_opt = viridis_option,
+                             viridis_dir = viridis_direction,
+                             grad_low = gradient_low,
+                             grad_high = gradient_high,
+                             grad_cols = gradient_cols,
+                             brewer_palette = brewer_pal,
+                             brewer_dir = brewer_direction,
+                             brewer_n_colors = brewer_n,
+                             size_min = 2.5,
+                             size_max = 7.0,
+                             size_cap = NULL) {
+  
+  go_csvs <- list.files(csv_dir, pattern = "cluster_.*_GO_(BP|MF|CC)\\.csv$", full.names = TRUE)
+  if (!length(go_csvs)) {
+    message("No GO CSV files found in: ", csv_dir)
+    return(invisible(FALSE))
+  }
+  
+  for (csv_path in go_csvs) {
+    df <- read.csv(csv_path, stringsAsFactors = FALSE)
+    
+    # Fold enrichment
+    df$FoldEnrichment <- compute_fold_enrichment(df$GeneRatio, df$BgRatio)
+    
+    # Gene count as integer
+    if (!"GeneCount" %in% names(df)) {
+      if ("Count" %in% names(df)) {
+        df$GeneCount <- df$Count
+      } else if ("geneID" %in% names(df)) {
+        df$GeneCount <- vapply(strsplit(df$geneID, "/", fixed = TRUE), length, integer(1))
+      } else {
+        num_gr <- do.call(rbind, strsplit(df$GeneRatio, "/", fixed = TRUE))
+        df$GeneCount <- as.numeric(num_gr[,1])
+      }
+    }
+    df$GeneCount <- as.integer(round(df$GeneCount))
+    
+    # -log10(p.adj)
+    if (!"NegLog10Padj" %in% names(df)) {
+      eps <- .Machine$double.xmin
+      df$NegLog10Padj <- -log10(pmax(as.numeric(df$p.adjust), eps))
+    }
+    
+    # Filter by padj and order
+    plot_df <- df[is.finite(df$FoldEnrichment) & !is.na(df$p.adjust) & df$p.adjust < padj_cut, ]
+    plot_df <- plot_df[order(plot_df$p.adjust, plot_df$Description), ]
+    if (nrow(plot_df) == 0) {
+      message("No terms with padj < ", padj_cut, " in ", basename(csv_path), ", skipping plot.")
+      next
+    }
+    if (nrow(plot_df) > top_n_terms) plot_df <- head(plot_df, top_n_terms)
+    
+    # 45-char wrapping
+    plot_df$Label <- wrap_label_by_chars(plot_df$Description, limit = wrap_char_limit)
+    
+    # Optional cap for size mapping
+    if (!is.null(size_cap)) {
+      plot_df$GeneCountCapped <- pmin(plot_df$GeneCount, as.integer(size_cap))
+      size_vals_for_breaks <- plot_df$GeneCountCapped
+    } else {
+      plot_df$GeneCountCapped <- plot_df$GeneCount
+      size_vals_for_breaks <- plot_df$GeneCount
+    }
+    
+    # Integer breaks for size legend
+    size_br <- size_breaks_integer(size_vals_for_breaks, n = 4)
+    
+    base_plot <- ggplot(plot_df, aes(x = FoldEnrichment,
+                                     y = reorder(Label, FoldEnrichment))) +
+      geom_point(aes(size = GeneCountCapped, color = NegLog10Padj)) +
+      scale_size_continuous(
+        name = "# Genes",
+        breaks = size_br,
+        labels = size_labels_integer,
+        range = c(size_min, size_max)
+      ) +
+      scale_x_continuous(
+        name = "Fold enrichment",
+        expand = expansion(mult = c(0.08, 0.05))
+      ) +
+      scale_y_discrete(
+        name = NULL,
+        expand = expansion(add = 0.6)
+      ) +
+      labs(
+        title = sprintf("%s (top %d, padj < %.02f)",
+                        sub("\\.csv$", "", basename(csv_path)),
+                        min(top_n_terms, nrow(plot_df)), padj_cut)
+      ) +
+      theme_classic(base_size = 12) +
+      theme(
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line        = element_line(color = "black"),
+        axis.ticks       = element_line(color = "black"),
+        plot.title       = element_text(hjust = 0.5),
+        axis.text.y      = element_text(size = 10)
+      )
+    
+    # Color palette selection for -log10(p.adj)
+    if (palette == "viridis") {
+      base_plot <- base_plot +
+        ggplot2::scale_color_viridis_c(
+          name = "-log10(p.adj)",
+          option = viridis_opt,
+          direction = viridis_dir
+        )
+    } else if (palette == "gradientn" && !is.null(grad_cols)) {
+      base_plot <- base_plot +
+        scale_color_gradientn(colours = grad_cols, name = "-log10(p.adj)")
+    } else if (palette == "gradient") {
+      base_plot <- base_plot +
+        scale_color_gradient(low = grad_low, high = grad_high, name = "-log10(p.adj)")
+    } else if (palette == "brewer") {
+      # Continuous ColorBrewer via distiller (e.g., RdBu includes #B2182B and #2166AC)
+      base_plot <- base_plot +
+        scale_color_distiller(
+          name = "-log10(p.adj)",
+          palette = brewer_palette,
+          direction = brewer_dir
+        )
+    } else if (palette == "brewner") {
+      # Continuous gradientn built from discrete Brewer stops
+      cols <- tryCatch(brewer.pal(brewer_n_colors, brewer_palette),
+                       error = function(e) c("#2166AC", "#F7F7F7", "#B2182B"))
+      base_plot <- base_plot +
+        scale_color_gradientn(colours = cols, name = "-log10(p.adj)")
+    } else {
+      # Fallback
+      base_plot <- base_plot +
+        scale_color_gradient(low = grad_low, high = grad_high, name = "-log10(p.adj)")
+    }
+    
+    # Adjustable panel vs legend width
+    legend_grob <- cowplot::get_legend(base_plot + theme(legend.position = "right"))
+    panel_plot  <- base_plot + theme(legend.position = "none")
+    combined_plot <- cowplot::plot_grid(
+      panel_plot, legend_grob,
+      ncol = 2, align = "h",
+      rel_widths = c(panel_rel_width, 1 - panel_rel_width)
+    )
+    
+    out_png <- file.path(
+      out_dir,
+      paste0(sub("\\.csv$", "", basename(csv_path)),
+             sprintf("_top%d_padj_lt%.02f_foldEnrichment_dotplot.png", top_n_terms, padj_cut))
+    )
+    ggsave(filename = out_png, plot = combined_plot, dpi = plot_dpi, width = plot_width, height = plot_height, units = "in")
+    message("Saved: ", basename(out_png))
+  }
+  
+  invisible(TRUE)
+}
+
+# Usage:
+run_enrichment_to_csv(input_dir, output_dir)
+plot_go_from_csv(csv_dir = output_dir,
+                 out_dir = output_dir,
+                 top_n_terms = 20,
+                 padj_cut = 0.05,
+                 panel_width = 0.60,
+                 palette = "brewer",             # "viridis","gradient","gradientn","brewer","brewner"
+                 brewer_palette = "Reds",        # includes #B2182B and #2166AC
+                 brewer_dir = 1)
+
+
+
+
+# Subset by Genotype -----------------------------------------------------------
+# Check exact genotype names
+table(pv_cortical_filtered$Genotype)
+
+# Create subsets
+wt_cortical <- subset(pv_cortical_filtered, subset = Genotype == "PV-Cre/tdTom")
+ko_cortical <- subset(pv_cortical_filtered, subset = Genotype == "PV-Cre/tdTom/Dnmt1 loxP2")
+
+# Validate subsets and check cell counts
+dim(wt_cortical)  
+dim(ko_cortical)
+
+# For wt object
+table(Idents(wt_cortical))
+
+# For ko object
+table(Idents(ko_cortical))
+
+# For wt
+wt_cortical_cluster_counts <- as.data.frame(table(Idents(wt_cortical)))
+colnames(wt_cortical_cluster_counts) <- c("Cluster", "CellNumber")
+print(wt_cortical_cluster_counts)
+
+# For ko
+ko_cortical_cluster_counts <- as.data.frame(table(Idents(ko_cortical)))
+colnames(ko_cortical_cluster_counts) <- c("Cluster", "CellNumber")
+print(ko_cortical_cluster_counts)
+
+# For wt
+ggplot(wt_cortical_cluster_counts, aes(x=Cluster, y=CellNumber)) +
+  geom_bar(stat="identity") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle("Cell Numbers per Cluster (WT)")
+
+
+# For ko
+ggplot(ko_cortical_cluster_counts, aes(x=Cluster, y=CellNumber)) +
+  geom_bar(stat="identity") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle("Cell Numbers per Cluster (KO)")
+
+
+# Proportional to total WT and KO cells---------------------
+
+# 1. Get cluster counts for WT and KO
+wt_cortical_cluster_counts <- as.data.frame(table(Idents(wt_cortical)))
+colnames(wt_cortical_cluster_counts) <- c("Cluster", "CellNumber_WT")
+
+ko_cortical_cluster_counts <- as.data.frame(table(Idents(ko_cortical)))
+colnames(ko_cortical_cluster_counts) <- c("Cluster", "CellNumber_KO")
+
+# 2. Get total number of cells in each dataset
+total_wt_cortical <- ncol(wt_cortical)  # or dim(wt)[1]
+total_ko_cortical <- ncol(ko_cortical)  # or dim(ko)[1]
+
+# 3. Calculate proportion of each cluster in WT and KO
+wt_cortical_cluster_counts$Proportion_WT <- wt_cortical_cluster_counts$CellNumber_WT / total_wt_cortical
+ko_cortical_cluster_counts$Proportion_KO <- ko_cortical_cluster_counts$CellNumber_KO / total_ko_cortical
+
+# 4. Merge the tables
+merged_cortical_counts <- merge(wt_cortical_cluster_counts, ko_cortical_cluster_counts, by = "Cluster", all = TRUE)
+merged_cortical_counts[is.na(merged_cortical_counts)] <- 0  # Replace NAs with 0
+
+# 5. Calculate relative difference in proportions (as percent)
+merged_cortical_counts$RelativeDifference <- (merged_cortical_counts$Proportion_KO - merged_cortical_counts$Proportion_WT) / merged_cortical_counts$Proportion_WT * 100
+
+# 6. Handle Inf/NaN (if Proportion_WT is zero)
+merged_cortical_counts$RelativeDifference[!is.finite(merged_cortical_counts$RelativeDifference)] <- NA
+
+merged_cortical_counts$Proportion_WT <- round(merged_cortical_counts$Proportion_WT * 100, 2)
+merged_cortical_counts$Proportion_KO <- round(merged_cortical_counts$Proportion_KO * 100, 2)
+merged_cortical_counts$RelativeDifference <- round(merged_cortical_counts$RelativeDifference, 2)
+write.csv(merged_cortical_counts, file = "cluster_relative_difference_WT_KO_cortical.csv", row.names = FALSE)
+
+# Assuming merged_counts from your previous code
+merged_cortical_counts$p_value <- NA
+
+for (i in 1:nrow(merged_cortical_counts)) {
+  k_WT <- merged_cortical_counts$CellNumber_WT[i]
+  k_KO <- merged_cortical_counts$CellNumber_KO[i]
+  # Only test if both groups have at least one cell
+  if ((k_WT + k_KO) > 0) {
+    test <- prop.test(
+      x = c(k_WT, k_KO),
+      n = c(total_wt_cortical, total_ko_cortical),
+      alternative = "two.sided"
+    )
+    merged_cortical_counts$p_value[i] <- test$p.value
+  }
+}
+merged_cortical_counts$adj_p_value <- p.adjust(merged_cortical_counts$p_value, method = "fdr")
+write.csv(merged_cortical_counts, file = "cluster_relative_difference_with_pvalues_cortical.csv", row.names = FALSE)
+
+
+# Side by side proportion analysis for all cell types ------------------------
+
+
+# Get cluster counts and calculate proportions
+wt_cortical_prop <- as.data.frame(table(Idents(wt_cortical)))
+colnames(wt_cortical_prop) <- c("Cluster", "Count_WT")
+wt_cortical_prop$Proportion_WT <- wt_cortical_prop$Count_WT / ncol(wt_cortical) * 100
+
+ko_cortical_prop <- as.data.frame(table(Idents(ko_cortical)))
+colnames(ko_cortical_prop) <- c("Cluster", "Count_KO")
+ko_cortical_prop$Proportion_KO <- ko_cortical_prop$Count_KO / ncol(ko_cortical) * 100
+
+# Merge data
+merged_cortical_prop <- merge(wt_cortical_prop, ko_cortical_prop, by = "Cluster", all = TRUE)
+merged_cortical_prop[is.na(merged_cortical_prop)] <- 0
+
+# Convert to long format for plotting
+plot_cortical_data <- merged_cortical_prop %>% 
+  pivot_longer(
+    cols = c(Proportion_WT, Proportion_KO),
+    names_to = "Condition",
+    values_to = "Proportion"
+  ) %>% 
+  mutate(Condition = factor(
+    Condition, 
+    levels = c("Proportion_WT", "Proportion_KO"),
+    labels = c("WT", "KO")
+  ))
+
+# Build plot: remove grid, keep axis lines, customize text
+p <- ggplot(plot_cortical_data, aes(x = Cluster, y = Proportion, fill = Condition)) +
+  geom_col(position = position_dodge(0.9), width = 0.8) +
+  scale_fill_manual(values = c("WT" = "#c6c6c6", "KO" = "#7FCDCD")) +
+  labs(
+    title = "Number of cells per cluster",
+    x = "Cluster",
+    y = "Proportion of Total Cells (%)"
+  ) +
+  # theme_classic removes gridlines and shows axis lines
+  theme_classic(base_size = 10) +
+  theme(
+    axis.text.x = element_text(angle = 70, hjust = 1),
+    axis.title.x = element_text(margin = margin(t = 20)),
+    legend.position = "right",
+    # Explicitly ensure grid is gone and axis lines are present
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black")
+  )
+
+print(p)
+
+# Save as PNG at 300 dpi (prefers ragg on Apple Silicon for crisp text)
+outfile <- "cortical_cluster_proportions.png"
+if (requireNamespace("ragg", quietly = TRUE)) {
+  ggsave(
+    filename = outfile,
+    plot = p,
+    width = 8,
+    height = 5,
+    units = "in",
+    dpi = 600,
+    device = ragg::agg_png
+  )
+} else {
+  ggsave(
+    filename = outfile,
+    plot = p,
+    width = 8,
+    height = 5,
+    units = "in",
+    dpi = 600
+  )
+}
+
+
+
+# Oligo population -----
+# Load required libraries
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(scales)
+
+# Assumes objects: wt_cortical, ko_cortical, total_wt_cortical, total_ko_cortical
+
+# Cells in each group
+wt_nmo <- WhichCells(wt_cortical, idents = "Newly mature oligodendrocytes")
+wt_myo <- WhichCells(wt_cortical, idents = "Myelinating oligodendrocytes")
+ko_nmo <- WhichCells(ko_cortical, idents = "Newly mature oligodendrocytes")
+ko_myo <- WhichCells(ko_cortical, idents = "Myelinating oligodendrocytes")
+
+# Union for mature
+wt_mature <- union(wt_nmo, wt_myo)
+ko_mature <- union(ko_nmo, ko_myo)
+
+# Counts
+n_wt_nmo <- length(wt_nmo)
+n_wt_myo <- length(wt_myo)
+n_wt_mature <- length(wt_mature)
+
+n_ko_nmo <- length(ko_nmo)
+n_ko_myo <- length(ko_myo)
+n_ko_mature <- length(ko_mature)
+
+# Proportions
+prop_wt_nmo <- n_wt_nmo / total_wt_cortical
+prop_wt_myo <- n_wt_myo / total_wt_cortical
+prop_wt_mature <- n_wt_mature / total_wt_cortical
+
+prop_ko_nmo <- n_ko_nmo / total_ko_cortical
+prop_ko_myo <- n_ko_myo / total_ko_cortical
+prop_ko_mature <- n_ko_mature / total_ko_cortical
+
+# Proportion tests
+test_nmo <- prop.test(c(n_wt_nmo, n_ko_nmo), c(total_wt_cortical, total_ko_cortical))
+test_myo <- prop.test(c(n_wt_myo, n_ko_myo), c(total_wt_cortical, total_ko_cortical))
+test_mature <- prop.test(c(n_wt_mature, n_ko_mature), c(total_wt_cortical, total_ko_cortical))
+
+# Data frame for plotting
+plot_data <- data.frame(
+  Group = rep(c("NMO", "MYO", "Mature oligodendrocytes"), each = 2),
+  Condition = factor(rep(c("WT", "KO"), 3), levels = c("WT", "KO")),
+  Proportion = c(prop_wt_nmo, prop_ko_nmo, prop_wt_myo, prop_ko_myo, prop_wt_mature, prop_ko_mature),
+  N_Pos = c(n_wt_nmo, n_ko_nmo, n_wt_myo, n_ko_myo, n_wt_mature, n_ko_mature)
+)
+
+# Significance
+plot_data$P_Value <- rep(c(test_nmo$p.value, test_myo$p.value, test_mature$p.value), each = 2)
+plot_data$Significance <- cut(plot_data$P_Value, breaks = c(-Inf, 0.001, 0.01, 0.05, Inf), 
+                              labels = c("***", "**", "*", "ns"))
+
+# Explicit plotting order
+plot_data$Group <- factor(plot_data$Group, levels = c("NMO", "MYO", "Mature oligodendrocytes"))
+
+# Annotation positions
+annotation_data <- plot_data %>% 
+  group_by(Group) %>% 
+  summarise(
+    y_pos = max(Proportion) + 0.002, 
+    p_value = P_Value[1],
+    significance = Significance[1], .groups = 'drop'
+  )
+
+# Plot
+p <- ggplot(plot_data, aes(x = Group, y = Proportion, fill = Condition)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), alpha = 0.8, width = 0.7) +
+  scale_fill_manual(values = c("WT" = "#c6c6c6", "KO" = "#7FCDCD")) +
+  geom_text(aes(label = paste0(N_Pos, "/", ifelse(Condition == "WT", total_wt_cortical, total_ko_cortical))),
+            position = position_dodge(width = 0.7), vjust = -0.7, size = 3) +
+  geom_text(data = annotation_data,
+            aes(x = Group, y = y_pos + 0.004, label = paste("p =", format.pval(p_value, digits = 2))),
+            inherit.aes = FALSE, hjust = 0.5, vjust = 0, size = 3) +
+  geom_text(data = annotation_data,
+            aes(x = Group, y = y_pos + 0.013, label = significance),
+            inherit.aes = FALSE, hjust = 0.5, vjust = 0, size = 6, fontface = "bold") +
+  labs(x = "", y = "Proportion of cells (of total)", 
+       title = "Proportions: NMO, MYO, Mature Oligodendrocytes", fill = "Condition") +
+  scale_y_continuous(labels = label_percent(accuracy = 1), expand = expansion(mult = c(0, 0.13))) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold"),
+    axis.line = element_line(color = "black", linewidth = 0.5),
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    legend.position = "top"
+  )
+
+print(p)
+
+ggsave(
+  "NMO_MYO_MatureOligodendrocytes_Proportions.png",
+  plot = p,
+  width = 8,
+  height = 6,
+  dpi = 300,
+  bg = "white"
+)
+
+# Pdgfc expressing cells - Perineuronal oligodendrocytes normalized to all cells --------------------
+# Load necessary libraries
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(scales)
+
+# Assumes 'wt_cortical', 'ko_cortical', 'total_wt_cortical', 'total_ko_cortical' exist
+
+gene_name <- "Pdgfc"
+
+# Expression matrices
+expr_mat_wt <- GetAssayData(wt_cortical, slot = "data")
+expr_mat_ko <- GetAssayData(ko_cortical, slot = "data")
+
+# Counts of Pdgfc+ cells in WT
+n_wt_OPC <- sum(expr_mat_wt[gene_name, WhichCells(wt_cortical, idents = "Oligodendrocyte precursor cells")] > 0)
+n_wt_NMO <- sum(expr_mat_wt[gene_name, WhichCells(wt_cortical, idents = "Newly mature oligodendrocytes")] > 0)
+n_wt_MYO <- sum(expr_mat_wt[gene_name, WhichCells(wt_cortical, idents = "Myelinating oligodendrocytes")] > 0)
+
+# Counts of Pdgfc+ cells in KO
+n_ko_OPC <- sum(expr_mat_ko[gene_name, WhichCells(ko_cortical, idents = "Oligodendrocyte precursor cells")] > 0)
+n_ko_NMO <- sum(expr_mat_ko[gene_name, WhichCells(ko_cortical, idents = "Newly mature oligodendrocytes")] > 0)
+n_ko_MYO <- sum(expr_mat_ko[gene_name, WhichCells(ko_cortical, idents = "Myelinating oligodendrocytes")] > 0)
+
+# Proportions normalized to all cells
+prop_wt_OPC <- n_wt_OPC / total_wt_cortical
+prop_wt_NMO <- n_wt_NMO / total_wt_cortical
+prop_wt_MYO <- n_wt_MYO / total_wt_cortical
+
+prop_ko_OPC <- n_ko_OPC / total_ko_cortical
+prop_ko_NMO <- n_ko_NMO / total_ko_cortical
+prop_ko_MYO <- n_ko_MYO / total_ko_cortical
+
+# Plotting data
+plot_data <- data.frame(
+  Cell_Type = rep(c("OPC", "NMO", "MYO"), each = 2),
+  Condition = rep(c("WT", "KO"), 3),
+  Proportion = c(prop_wt_OPC, prop_ko_OPC,
+                 prop_wt_NMO, prop_ko_NMO, 
+                 prop_wt_MYO, prop_ko_MYO)
+)
+
+# Enforce display order
+plot_data$Cell_Type <- factor(plot_data$Cell_Type, levels = c("OPC", "NMO", "MYO"))
+plot_data$Condition <- factor(plot_data$Condition, levels = c("WT", "KO"))
+
+# Tests
+opc_test <- prop.test(c(n_wt_OPC, n_ko_OPC), c(total_wt_cortical, total_ko_cortical))
+nmo_test <- prop.test(c(n_wt_NMO, n_ko_NMO), c(total_wt_cortical, total_ko_cortical))
+myo_test <- prop.test(c(n_wt_MYO, n_ko_MYO), c(total_wt_cortical, total_ko_cortical))
+
+p_values <- c(opc_test$p.value, nmo_test$p.value, myo_test$p.value)
+
+annotation_data <- plot_data |>
+  dplyr::group_by(Cell_Type) |>
+  dplyr::summarise(y_pos = max(Proportion) + 0.002, .groups = "drop") |>
+  dplyr::mutate(
+    p_value = p_values,
+    significance = dplyr::case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",
+      TRUE            ~ "ns"
+    )
+  )
+
+# Plot with small space between paired bars
+p1 <- ggplot(plot_data, aes(x = Cell_Type, y = Proportion, fill = Condition)) +
+  geom_bar(
+    stat = "identity",
+    position = position_dodge2(width = 0.8, padding = 0.15, preserve = "single"),
+    alpha = 1,
+    width = 0.65
+  ) +
+  scale_fill_manual(values = c("WT" = "#c6c6c6", "KO" = "#7FCDCD")) +
+  geom_text(
+    data = annotation_data, 
+    aes(x = Cell_Type, y = y_pos + 0.008, label = paste("p =", format.pval(p_value, digits = 2))),
+    inherit.aes = FALSE, hjust = 0.5, vjust = 0, size = 3
+  ) +
+  geom_text(
+    data = annotation_data, 
+    aes(x = Cell_Type, y = y_pos + 0.015, label = significance),
+    inherit.aes = FALSE, hjust = 0.5, vjust = 0, size = 5, fontface = "bold"
+  ) +
+  labs(
+    x = "Cell Type", 
+    y = "Proportion of Pdgfc+ cells (of total)", 
+    title = "Pdgfc Expression Across Oligodendrocyte Subtypes",
+    fill = "Condition"
+  ) +
+  scale_x_discrete(labels = c(
+    "Oligodendrocyte\nPrecursor Cells",
+    "Newly Mature\nOligodendrocytes", 
+    "Myelinating\nOligodendrocytes"
+  )) +
+  scale_y_continuous(labels = label_percent(accuracy = 1),
+                     expand = expansion(mult = c(0, 0.1))) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold"),
+    axis.line = element_line(color = "black", linewidth = 0.5),
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    legend.position = "top"
+  )
+
+print(p1)
+
+ggsave(
+  "Pdgfc_Oligo_Proportions_AllCells.pdf",
+  plot = p1,
+  width = 4,
+  height = 6,
+  #dpi = 600,
+  bg = "transparent"
+)
+
+
+# Pdgfc expressing cells - Perineuronal oligodendrocytes normalized per cluster --------------------
+# Load necessary libraries
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(scales)
+
+# Cluster totals (WT)
+total_wt_OPC <- length(WhichCells(wt_cortical, idents = "Oligodendrocyte precursor cells"))
+total_wt_NMO <- length(WhichCells(wt_cortical, idents = "Newly mature oligodendrocytes"))
+total_wt_MYO <- length(WhichCells(wt_cortical, idents = "Myelinating oligodendrocytes"))
+
+# Cluster totals (KO)
+total_ko_OPC <- length(WhichCells(ko_cortical, idents = "Oligodendrocyte precursor cells"))
+total_ko_NMO <- length(WhichCells(ko_cortical, idents = "Newly mature oligodendrocytes"))
+total_ko_MYO <- length(WhichCells(ko_cortical, idents = "Myelinating oligodendrocytes"))
+
+# Reuse n_wt_*, n_ko_* from previous code block or recompute if running standalone
+# (Shown here for standalone use)
+expr_mat_wt <- GetAssayData(wt_cortical, slot = "data")
+expr_mat_ko <- GetAssayData(ko_cortical, slot = "data")
+
+n_wt_OPC <- sum(expr_mat_wt[gene_name, WhichCells(wt_cortical, idents = "Oligodendrocyte precursor cells")] > 0)
+n_wt_NMO <- sum(expr_mat_wt[gene_name, WhichCells(wt_cortical, idents = "Newly mature oligodendrocytes")] > 0)
+n_wt_MYO <- sum(expr_mat_wt[gene_name, WhichCells(wt_cortical, idents = "Myelinating oligodendrocytes")] > 0)
+
+n_ko_OPC <- sum(expr_mat_ko[gene_name, WhichCells(ko_cortical, idents = "Oligodendrocyte precursor cells")] > 0)
+n_ko_NMO <- sum(expr_mat_ko[gene_name, WhichCells(ko_cortical, idents = "Newly mature oligodendrocytes")] > 0)
+n_ko_MYO <- sum(expr_mat_ko[gene_name, WhichCells(ko_cortical, idents = "Myelinating oligodendrocytes")] > 0)
+
+# Proportions normalized within each cluster
+prop_wt_OPC_cluster <- n_wt_OPC / total_wt_OPC
+prop_wt_NMO_cluster <- n_wt_NMO / total_wt_NMO
+prop_wt_MYO_cluster <- n_wt_MYO / total_wt_MYO
+
+prop_ko_OPC_cluster <- n_ko_OPC / total_ko_OPC
+prop_ko_NMO_cluster <- n_ko_NMO / total_ko_NMO
+prop_ko_MYO_cluster <- n_ko_MYO / total_ko_MYO
+
+plot_data_cluster <- data.frame(
+  Cell_Type = rep(c("OPC", "NMO", "MYO"), each = 2),
+  Condition = rep(c("WT", "KO"), 3),
+  Proportion = c(prop_wt_OPC_cluster, prop_ko_OPC_cluster,
+                 prop_wt_NMO_cluster, prop_ko_NMO_cluster, 
+                 prop_wt_MYO_cluster, prop_ko_MYO_cluster)
+)
+
+plot_data_cluster$Cell_Type <- factor(plot_data_cluster$Cell_Type, levels = c("OPC", "NMO", "MYO"))
+plot_data_cluster$Condition <- factor(plot_data_cluster$Condition, levels = c("WT", "KO"))
+
+# Tests using cluster-specific denominators
+opc_test_cluster <- prop.test(c(n_wt_OPC, n_ko_OPC), c(total_wt_OPC, total_ko_OPC))
+nmo_test_cluster <- prop.test(c(n_wt_NMO, n_ko_NMO), c(total_wt_NMO, total_ko_NMO))
+myo_test_cluster <- prop.test(c(n_wt_MYO, n_ko_MYO), c(total_wt_MYO, total_ko_MYO))
+
+p_values_cluster <- c(opc_test_cluster$p.value, nmo_test_cluster$p.value, myo_test_cluster$p.value)
+
+annotation_data_cluster <- plot_data_cluster |>
+  dplyr::group_by(Cell_Type) |>
+  dplyr::summarise(y_pos = max(Proportion) + 0.01, .groups = "drop") |>
+  dplyr::mutate(
+    p_value = p_values_cluster,
+    significance = dplyr::case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",
+      TRUE            ~ "ns"
+    )
+  )
+
+# Plot with no gridlines
+p2 <- ggplot(plot_data_cluster, aes(x = Cell_Type, y = Proportion, fill = Condition)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.8, width = 0.7) +
+  scale_fill_manual(values = c("WT" = "#c6c6c6", "KO" = "#7FCDCD")) +
+  geom_text(data = annotation_data_cluster, 
+            aes(x = Cell_Type, y = y_pos + 0.02, label = paste("p =", format.pval(p_value, digits = 2))),
+            inherit.aes = FALSE, hjust = 0.5, vjust = 0, size = 3) +
+  geom_text(data = annotation_data_cluster, 
+            aes(x = Cell_Type, y = y_pos + 0.04, label = significance),
+            inherit.aes = FALSE, hjust = 0.5, vjust = 0, size = 5, fontface = "bold") +
+  labs(x = "Cell Type", 
+       y = "Proportion of Pdgfc+ cells (within cluster)", 
+       title = "Pdgfc Expression Within Oligodendrocyte Subtypes",
+       fill = "Condition") +
+  scale_x_discrete(labels = c("Oligodendrocyte\nPrecursor Cells",
+                              "Newly Mature\nOligodendrocytes", 
+                              "Myelinating\nOligodendrocytes")) +
+  scale_y_continuous(labels = label_percent(accuracy = 1),
+                     expand = expansion(mult = c(0, 0.1))) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),        # Remove all gridlines
+    axis.text.x = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold"),
+    axis.line = element_line(color = "black", linewidth = 0.5),
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    legend.position = "top"
+  )
+
+print(p2)
+
+ggsave(
+  "Pdgfc_Oligo_Proportions_PerCluster.png",
+  plot = p2,
+  width = 8,
+  height = 6,
+  dpi = 300,
+  bg = "transparent"
+)
