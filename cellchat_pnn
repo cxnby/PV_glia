@@ -1,0 +1,2309 @@
+##### Duplicate your original object to preserve it -----
+pv_cortical_filtered_pnn <- pv_cortical_filtered
+
+# Find cells in the main object that are both in 'Newly mature oligodendrocytes' and express Pdgfc
+pdgfc_positive <- WhichCells(
+  pv_cortical_filtered_pnn, 
+  idents = "Newly mature oligodendrocytes", 
+  expression = Pdgfc > 0
+)
+
+# Create a new annotation vector from existing identities
+pv_cortical_filtered_pnn$renamed_clusters <- as.character(Idents(pv_cortical_filtered_pnn))
+
+# Assign the new label to the identified cells
+pv_cortical_filtered_pnn$renamed_clusters[pdgfc_positive] <- "Perineuronal oligodendrocytes"
+
+# Set as the active identity
+Idents(pv_cortical_filtered_pnn) <- pv_cortical_filtered_pnn$renamed_clusters
+
+# Check the updated cluster table
+table(Idents(pv_cortical_filtered_pnn))
+
+##### Define your final order  -------------
+desired_order_cortical_final_pnn <- c(
+  "Layer 2/3 IT neurons",
+  "Layer 4 sensory neurons", 
+  "Layer 5a IT neurons",
+  "Layer 5b PT neurons",
+  "Layer 5/6 IT neurons",
+  "Layer 6 corticothalamic neurons",
+  "Deep-layer extratelencephalic neurons",
+  "Corticospinal neurons (Type I)",
+  "Corticospinal neurons (Type II)",
+  "Atypical excitatory neurons",
+  "PV+ interneurons",
+  "SST+ interneurons",
+  "VIP+ interneurons",
+  "Astrocytes",
+  "Oligodendrocyte precursor cells",
+  "Perineuronal oligodendrocytes",
+  "Newly mature oligodendrocytes",
+  "Myelinating oligodendrocytes",
+  "Microglia",
+  "Endothelial cells",
+  "Leptomeningeal cells",
+  "Meningeal fibroblasts"
+)
+
+# Set new identity
+Idents(pv_cortical_filtered_pnn) <- factor(
+  Idents(pv_cortical_filtered_pnn),
+  levels = desired_order_cortical_final_pnn
+)
+
+# Verify the new ordering
+table(Idents(pv_cortical_filtered_pnn))
+
+DimPlot(pv_cortical_filtered_pnn, reduction = "umap", label=TRUE, repel=TRUE) + 
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 3)))
+
+##### Save the file -------------
+saveRDS(pv_cortical_filtered_pnn, file = "pv_cortical_subclustered_final_pnn.rds")  # Saves the subsetted Seurat object to disk[15]
+pv_cortical_filtered_pnn <- readRDS("pv_cortical_subclustered_final_pnn.rds")
+
+##### Plot and save UMAP ------
+
+cluster_ids <- levels(Idents(pv_cortical_filtered_pnn))
+colors <- setNames(
+  c(
+    "#6B5B95",  # 1 deep lavender
+    "#45B8AC",  # 2 mellow aqua
+    "#955251",  # 3 dusty rose
+    "#4E84C4",  # 4 soft steel blue
+    "#B565A7",  # 5 soft mauve
+    "#88B04B",  # 6 muted chartreuse
+    "#C3447A",  # 7 muted fuchsia
+    "#009B77",  # 8 subdued teal
+    "#EFC050",  # 9 warm mustard
+    "#7B6888",  # 10 muted indigo
+    "#7FCDCD",  # 11 misty cyan
+    "#DD4124",  # 12 brick red
+    "#5B5EA6",  # 13 slate purple
+    "#E07A5F",  # 14 muted coral
+    "#4BACC6",  # 15 soft cerulean
+    "#ea8a33",
+    "#E8A0BF",  # 16 soft blush
+    "#9B2335",  # 17 faded burgundy
+    "#C17BAE",  # 18 dusty orchid
+    "#DECF3F",  # 19 olive gold
+    "#789262",  # 20 sage green
+    "#BC243C"   # 21 dark raspberry
+  ),
+  cluster_ids
+)
+
+DimPlot(pv_cortical_filtered_pnn, reduction = "umap",repel = TRUE) + 
+  scale_colour_manual(values = colors) +
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 3)))
+
+umap_2 <- DimPlot(pv_cortical_filtered_pnn, reduction = "umap",repel = TRUE) + 
+  scale_colour_manual(values = colors) +
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 3)))
+
+png(filename = "umap_pnn.png", width = 10, height = 7, units = "in", res = 600)
+umap_2
+dev.off()
+
+##### Marker gene visualization ----------------
+# Find marker genes
+all_markers_cortical_pnn <- FindAllMarkers(pv_cortical_filtered_pnn,
+                                       min.pct = 0.25,          # Gene must be detected in ≥25% cells
+                                       logfc.threshold = 0.25,  # Minimum fold change threshold
+                                       only.pos = FALSE,         # Keep both upregulated and downregulated markers
+                                       test.use = "wilcox"      # Default Wilcoxon Rank Sum test
+)
+
+# Dot blot with top 5 marker genes
+top5_markers_pnn <- all_markers_cortical_pnn %>%
+  group_by(cluster) %>%
+  filter(p_val_adj < 0.05) %>%  # Adjusted p-value cutoff
+  filter(!grepl("^ENSMUSG", gene)) %>% 
+  slice_max(avg_log2FC, n = 5) %>%
+  pull(gene) %>%                        # Extract gene names
+  unique() 
+
+
+p <- DotPlot(pv_cortical_filtered_pnn, 
+             features = top5_markers_pnn,
+             dot.scale = 3,
+             col.min = -1.5,                       # Set color scale limits
+             col.max = 2.5
+)
+
+# With lncRNAs
+png("top5_markers_with_lncRNAs_pnn.png", width = 30, height = 10, units = "in", res = 300, type = "quartz")
+print(p + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, face = "italic")))
+dev.off()
+
+# Dot blot with top 5 marker genes without Gms
+top5_markers_nogm_norik_pnn <- all_markers_cortical_pnn %>%
+  group_by(cluster) %>%
+  filter(p_val_adj < 0.05) %>%  # Adjusted p-value cutoff
+  filter(!grepl("^ENSMUSG", gene)) %>% 
+  filter(!grepl("^Gm", gene)) %>% 
+  filter(!grepl("Rik$", gene)) %>%
+  slice_max(avg_log2FC, n = 5) %>%
+  pull(gene) %>%                        # Extract gene names
+  unique() 
+
+
+p <- DotPlot(pv_cortical_filtered_pnn, 
+             features = top5_markers_nogm_norik_pnn,
+             dot.scale = 3,
+             col.min = -1.5,                       # Set color scale limits
+             col.max = 2.5
+)
+
+
+# Without Gm/Rik genes
+png("top5_markers_without_gms_riks_pnn_45deg.png", width = 30, height = 10, units = "in", res = 300, type = "quartz")
+print(p + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, face = "italic")))
+dev.off()
+
+
+##### Differential expression analysis (only for NMO and PNO) -------
+# Load required libraries
+library(ggplot2)
+library(ggrepel)
+
+# Parameters
+wt_label  <- "PV-Cre/tdTom"
+ko_label  <- "PV-Cre/tdTom/Dnmt1 loxP2"
+logfc_thr <- 0.26
+padj_thr  <- 0.05
+
+# Check metadata
+table(pv_cortical_filtered_pnn$Genotype)
+
+# Only these two clusters
+clusters <- c("Perineuronal oligodendrocytes", "Newly mature oligodendrocytes")
+
+# Helper: sanitize cluster id for filenames
+sanitize_id <- function(x) gsub("[^A-Za-z0-9_]", "_", x)
+
+# Helper: build volcano plot with different labeling modes
+build_volcano <- function(de, clust, label_mode = c("top10", "signif", "none")) {
+  label_mode <- match.arg(label_mode)
+  
+  # Base label column
+  de$label <- ""
+  
+  # Determine which genes to label
+  if (label_mode == "top10") {
+    # Masks for significant UP and DOWN based on thresholds
+    is_up   <- (de$avg_log2FC >= logfc_thr) & (de$p_val_adj < padj_thr)
+    is_down <- (de$avg_log2FC <= -logfc_thr) & (de$p_val_adj < padj_thr)
+    
+    # Safety: enforce disjoint sets
+    if (any(is_up & is_down, na.rm = TRUE)) {
+      warning("Rows classified as both UP and DOWN; check thresholds/data.")
+      is_down[is_up] <- FALSE
+    }
+    
+    # Top-10 by adjusted p-value within each side (de is pre-sorted by p_val_adj)
+    up_df   <- de[is_up, , drop = FALSE]
+    down_df <- de[is_down, , drop = FALSE]
+    
+    if (nrow(up_df) > 0) {
+      up_df <- head(up_df, 10)
+      de$label[match(up_df$gene, de$gene)] <- up_df$gene
+    }
+    if (nrow(down_df) > 0) {
+      down_df <- head(down_df, 10)
+      de$label[match(down_df$gene, de$gene)] <- down_df$gene
+    }
+  } else if (label_mode == "signif") {
+    de$label[de$diffexpressed != "NO"] <- de$gene
+  } # "none" leaves labels empty
+  
+  # Base plot
+  p <- ggplot(
+    de,
+    aes(x = avg_log2FC, y = neg_log10_padj, color = diffexpressed)
+  ) +
+    geom_point(alpha = 0.6, size = 1.5, show.legend = TRUE) +
+    scale_color_manual(
+      values = c("UP" = "#b2182b", "DOWN" = "#2166ac", "NO" = "grey70"),
+      labels = c("DOWN" = "Downregulated", "NO" = "Not significant", "UP" = "Upregulated")
+    ) +
+    geom_vline(xintercept = c(-logfc_thr, logfc_thr), linetype = "dashed", color = "grey60", linewidth = 0.2) +
+    geom_hline(yintercept = -log10(padj_thr), linetype = "dashed", color = "grey60", linewidth = 0.2) +
+    labs(
+      title = paste0("Cluster ", clust, ": KO vs WT"),
+      x = "Log2 Fold Change",
+      y = "-Log10(Adjusted P-value)",
+      color = "Differential Expression"
+    ) +
+    theme_classic() +
+    theme(
+      plot.title  = element_text(hjust = 0.5, size = 14, face = "bold"),
+      axis.title  = element_text(size = 12),
+      axis.text   = element_text(size = 10),
+      legend.position = "right",
+      axis.line   = element_line(color = "black", linewidth = 0.5)
+    ) +
+    guides(color = guide_legend(override.aes = list(size = 3, alpha = 1)))
+  
+  # Add labels depending on mode
+  if (label_mode == "top10" && any(nzchar(de$label))) {
+    set.seed(123)
+    p <- p +
+      ggrepel::geom_text_repel(
+        aes(label = label),
+        max.overlaps = 20,
+        size = 3,
+        box.padding = 0.5,
+        point.padding = 0.3,
+        show.legend = FALSE,
+        segment.color = "grey30",
+        segment.size  = 0.3,
+        min.segment.length = 0
+      )
+  } else if (label_mode == "signif" && any(nzchar(de$label))) {
+    set.seed(123)
+    p <- p +
+      ggrepel::geom_text_repel(
+        aes(label = label),
+        max.overlaps = Inf,
+        size = 2.5,
+        box.padding = 0.1,
+        point.padding = 0.1,
+        show.legend = FALSE,
+        segment.color = NA,
+        segment.size  = 0
+      )
+  }
+  p
+}
+
+# Iterate specified clusters only, save in working directory
+for (clust in clusters) {
+  cells  <- WhichCells(pv_cortical_filtered_pnn, idents = clust)
+  if (length(cells) == 0) {
+    warning("No cells found for cluster: ", clust)
+    next
+  }
+  subobj <- subset(pv_cortical_filtered_pnn, cells = cells)
+  Idents(subobj) <- "Genotype"
+  
+  de <- FindMarkers(
+    object = subobj,
+    ident.1 = ko_label,
+    ident.2 = wt_label,
+    min.pct = 0.1,
+    logfc.threshold = logfc_thr
+  )
+  
+  # Ensure gene names
+  de$gene <- rownames(de)
+  
+  # Handle possible older Seurat column name
+  if (!"avg_log2FC" %in% colnames(de) && "avg_logFC" %in% colnames(de)) {
+    de$avg_log2FC <- de$avg_logFC
+  }
+  
+  # Remove Ensembl-like genes starting with ENSMUSG
+  de <- de[!grepl("^ENSMUSG", de$gene, ignore.case = FALSE), , drop = FALSE]
+  
+  # Sort by adjusted p-value
+  if (nrow(de) > 0) {
+    de <- de[order(de$p_val_adj), , drop = FALSE]
+  }
+  
+  # Classification for colors (significance)
+  de$diffexpressed <- "NO"
+  de$diffexpressed[de$avg_log2FC >= logfc_thr & de$p_val_adj < padj_thr] <- "UP"
+  de$diffexpressed[de$avg_log2FC <= -logfc_thr & de$p_val_adj < padj_thr] <- "DOWN"
+  de$diffexpressed <- factor(de$diffexpressed, levels = c("UP", "DOWN", "NO"))
+  
+  # y-axis: -log10 padj, with safe handling for zeros
+  de$neg_log10_padj <- -log10(de$p_val_adj)
+  finite_vals <- de$neg_log10_padj[is.finite(de$neg_log10_padj)]
+  if (length(finite_vals) == 0) finite_vals <- 0
+  max_finite <- max(finite_vals)
+  de$neg_log10_padj[!is.finite(de$neg_log10_padj)] <- max_finite + 10
+  
+  # Filenames (save into working directory)
+  safe_clust <- sanitize_id(clust)
+  filename_csv <- paste0("cluster_", safe_clust, "_KO_vs_WT_all_genes_filtered.csv")
+  filename_top10 <- paste0("cluster_", safe_clust, "_KO_vs_WT_volcano_top10_filtered.png")
+  filename_sig   <- paste0("cluster_", safe_clust, "_KO_vs_WT_volcano_sig_labeled_filtered.pdf")
+  filename_clean <- paste0("cluster_", safe_clust, "_KO_vs_WT_volcano_clean_filtered.png")
+  
+  # Write CSV
+  write.csv(de, file = filename_csv, row.names = FALSE)
+  message("Saved filtered DE results for cluster ", clust, " to ", filename_csv)
+  
+  # Build and save three plot variants (saved in working directory)
+  p_top10 <- build_volcano(de, clust, label_mode = "top10")
+  ggsave(filename = filename_top10, plot = p_top10, width = 10, height = 8, dpi = 300, units = "in", device = "png")
+  
+  p_sig <- build_volcano(de, clust, label_mode = "signif")
+  ggsave(filename = filename_sig, plot = p_sig, width = 10, height = 8, units = "in", device = "pdf")
+  
+  p_clean <- build_volcano(de, clust, label_mode = "none")
+  ggsave(filename = filename_clean, plot = p_clean, width = 10, height = 8, dpi = 300, units = "in", device = "png")
+}
+
+
+##### Subset by Genotype -----------------------------------------------------------
+# Check exact genotype names
+table(pv_cortical_filtered_pnn$Genotype)
+
+# Create subsets
+wt_cortical_pnn <- subset(pv_cortical_filtered_pnn, subset = Genotype == "PV-Cre/tdTom")
+ko_cortical_pnn <- subset(pv_cortical_filtered_pnn, subset = Genotype == "PV-Cre/tdTom/Dnmt1 loxP2")
+
+# Validate subsets and check cell counts
+dim(wt_cortical_pnn)  
+dim(ko_cortical_pnn)
+
+# For wt object
+table(Idents(wt_cortical_pnn))
+
+# For ko object
+table(Idents(ko_cortical_pnn))
+
+# 1. Get cluster counts for WT and KO
+wt_cortical_cluster_counts_pnn <- as.data.frame(table(Idents(wt_cortical_pnn)))
+colnames(wt_cortical_cluster_counts_pnn) <- c("Cluster", "CellNumber_WT")
+
+ko_cortical_cluster_counts_pnn <- as.data.frame(table(Idents(ko_cortical_pnn)))
+colnames(ko_cortical_cluster_counts_pnn) <- c("Cluster", "CellNumber_KO")
+
+# 2. Get total number of cells in each dataset
+total_wt_cortical_pnn <- ncol(wt_cortical_pnn)  # or dim(wt)[1]
+total_ko_cortical_pnn <- ncol(ko_cortical_pnn)  # or dim(ko)[1]
+
+# 3. Calculate proportion of each cluster in WT and KO
+wt_cortical_cluster_counts_pnn$Proportion_WT <- wt_cortical_cluster_counts_pnn$CellNumber_WT / total_wt_cortical_pnn
+ko_cortical_cluster_counts_pnn$Proportion_KO <- ko_cortical_cluster_counts_pnn$CellNumber_KO / total_ko_cortical_pnn
+
+# 4. Merge the tables
+merged_cortical_counts_pnn <- merge(wt_cortical_cluster_counts_pnn, ko_cortical_cluster_counts_pnn, by = "Cluster", all = TRUE)
+merged_cortical_counts_pnn[is.na(merged_cortical_counts_pnn)] <- 0  # Replace NAs with 0
+
+# 5. Calculate relative difference in proportions (as percent)
+merged_cortical_counts_pnn$RelativeDifference <- (merged_cortical_counts_pnn$Proportion_KO - merged_cortical_counts_pnn$Proportion_WT) / merged_cortical_counts_pnn$Proportion_WT * 100
+
+# 6. Handle Inf/NaN (if Proportion_WT is zero)
+merged_cortical_counts_pnn$RelativeDifference[!is.finite(merged_cortical_counts_pnn$RelativeDifference)] <- NA
+
+merged_cortical_counts_pnn$Proportion_WT <- round(merged_cortical_counts_pnn$Proportion_WT * 100, 2)
+merged_cortical_counts_pnn$Proportion_KO <- round(merged_cortical_counts_pnn$Proportion_KO * 100, 2)
+merged_cortical_counts_pnn$RelativeDifference <- round(merged_cortical_counts_pnn$RelativeDifference, 2)
+
+# Assuming merged_counts from your previous code
+merged_cortical_counts_pnn$p_value <- NA
+
+for (i in 1:nrow(merged_cortical_counts_pnn)) {
+  k_WT_pnn <- merged_cortical_counts_pnn$CellNumber_WT[i]
+  k_KO_pnn <- merged_cortical_counts_pnn$CellNumber_KO[i]
+  # Only test if both groups have at least one cell
+  if ((k_WT_pnn + k_KO_pnn) > 0) {
+    test <- prop.test(
+      x = c(k_WT_pnn, k_KO_pnn),
+      n = c(total_wt_cortical_pnn, total_ko_cortical_pnn),
+      alternative = "two.sided"
+    )
+    merged_cortical_counts_pnn$p_value[i] <- test$p.value
+  }
+}
+merged_cortical_counts_pnn$adj_p_value <- p.adjust(merged_cortical_counts_pnn$p_value, method = "fdr")
+write.csv(merged_cortical_counts_pnn, file = "cluster_relative_difference_with_pvalues_cortical_pnn.csv", row.names = FALSE)
+
+
+##### CellChat -----
+# For WT
+data.input <- wt_cortical_pnn[["RNA"]]$data # normalized data matrix
+labels <- Idents(wt_cortical_pnn)
+meta <- data.frame(labels = labels, row.names = names(labels))
+cellchat_wt_cortical_pnn <- createCellChat(object = wt_cortical_pnn, group.by = "ident", assay = "RNA")
+
+
+CellChatDB <- CellChatDB.mouse # use CellChatDB.mouse if running on mouse data
+showDatabaseCategory(CellChatDB)
+dplyr::glimpse(CellChatDB$interaction)
+
+CellChatDB.use <- CellChatDB
+cellchat_wt_cortical_pnn@DB <- CellChatDB.use
+
+cellchat_wt_cortical_pnn <- subsetData(cellchat_wt_cortical_pnn)
+cellchat_wt_cortical_pnn <- updateCellChat(cellchat_wt_cortical_pnn)
+#future::plan("multisession", workers = 12) # do parallel
+#future::plan("sequential")
+
+cellchat_wt_cortical_pnn <- identifyOverExpressedGenes(cellchat_wt_cortical_pnn)
+cellchat_wt_cortical_pnn <- identifyOverExpressedInteractions(cellchat_wt_cortical_pnn)
+length(cellchat_wt_cortical_pnn@LR$LRsig)
+
+ptm = Sys.time()
+execution.time = Sys.time() - ptm
+print(as.numeric(execution.time, units = "secs"))
+
+cellchat_wt_cortical_pnn <- computeCommunProb(cellchat_wt_cortical_pnn, type = "triMean")
+cellchat_wt_cortical_pnn <- filterCommunication(cellchat_wt_cortical_pnn, min.cells = 10)
+
+cellchat_wt_cortical_pnn <- computeCommunProbPathway(cellchat_wt_cortical_pnn)
+
+cellchat_wt_cortical_pnn <- aggregateNet(cellchat_wt_cortical_pnn)
+execution.time = Sys.time() - ptm
+print(as.numeric(execution.time, units = "secs"))
+
+# For KO
+data.input <- ko_cortical_pnn[["RNA"]]$data # normalized data matrix
+labels <- Idents(ko_cortical_pnn)
+meta <- data.frame(labels = labels, row.names = names(labels))
+cellchat_ko_cortical_pnn <- createCellChat(object = ko_cortical_pnn, group.by = "ident", assay = "RNA")
+
+
+CellChatDB <- CellChatDB.mouse # use CellChatDB.mouse if running on mouse data
+showDatabaseCategory(CellChatDB)
+dplyr::glimpse(CellChatDB$interaction)
+
+CellChatDB.use <- CellChatDB
+cellchat_ko_cortical_pnn@DB <- CellChatDB.use
+
+cellchat_ko_cortical_pnn <- subsetData(cellchat_ko_cortical_pnn)
+cellchat_ko_cortical_pnn <- updateCellChat(cellchat_ko_cortical_pnn)
+#future::plan("multisession", workers = 12) # do parallel
+#future::plan("sequential")
+
+cellchat_ko_cortical_pnn <- identifyOverExpressedGenes(cellchat_ko_cortical_pnn)
+cellchat_ko_cortical_pnn <- identifyOverExpressedInteractions(cellchat_ko_cortical_pnn)
+length(cellchat_ko_cortical_pnn@LR$LRsig)
+
+ptm = Sys.time()
+execution.time = Sys.time() - ptm
+print(as.numeric(execution.time, units = "secs"))
+
+cellchat_ko_cortical_pnn <- computeCommunProb(cellchat_ko_cortical_pnn, type = "triMean")
+cellchat_ko_cortical_pnn <- filterCommunication(cellchat_ko_cortical_pnn, min.cells = 10)
+
+cellchat_ko_cortical_pnn <- computeCommunProbPathway(cellchat_ko_cortical_pnn)
+
+cellchat_ko_cortical_pnn <- aggregateNet(cellchat_ko_cortical_pnn)
+execution.time = Sys.time() - ptm
+print(as.numeric(execution.time, units = "secs"))
+
+
+
+
+##### Rename clusters ------
+old_cellchat_names_pnn <- c(
+  "Layer 2/3 IT neurons",
+  "Layer 4 sensory neurons",
+  "Layer 5a IT neurons",
+  "Layer 5b PT neurons",
+  "Layer 5/6 IT neurons",
+  "Layer 6 corticothalamic neurons",
+  "Deep-layer extratelencephalic neurons",
+  "Corticospinal neurons (Type I)",
+  "Corticospinal neurons (Type II)",
+  "Atypical excitatory neurons",
+  "PV+ interneurons",
+  "SST+ interneurons",
+  "VIP+ interneurons",
+  "Astrocytes",
+  "Oligodendrocyte precursor cells",
+  "Perineuronal oligodendrocytes",
+  "Newly mature oligodendrocytes",
+  "Myelinating oligodendrocytes",
+  "Microglia",
+  "Endothelial cells",
+  "Leptomeningeal cells",
+  "Meningeal fibroblasts"
+)
+
+new_names_pnn <- c(
+  "L2/3 IT",
+  "L4 Sensory",
+  "L5a IT",
+  "L5b PT",
+  "L5/6 IT",
+  "L6 CT",
+  "Deep ET",
+  "CSN Type I",
+  "CSN Type II",
+  "Atypical Exc",
+  "PV+ Int",
+  "SST+ Int",
+  "VIP+ Int",
+  "Astrocyte",
+  "OPC",
+  "Perineuronal Oligo",
+  "New Oligo",
+  "Myelinating Oligo",
+  "Microglia",
+  "Endothelial",
+  "Leptomeningeal FB",
+  "Meningeal FB"
+)
+
+cellchat_wt_cortical_pnn <- updateClusterLabels(
+  cellchat_wt_cortical_pnn,
+  old.cluster.name = old_cellchat_names_pnn,
+  new.cluster.name = new_names_pnn
+)
+
+cellchat_ko_cortical_pnn <- updateClusterLabels(
+  cellchat_ko_cortical_pnn,
+  old.cluster.name = old_cellchat_names_pnn,
+  new.cluster.name = new_names_pnn
+)
+
+# Verify
+levels(cellchat_wt_cortical_pnn@idents)
+levels(cellchat_ko_cortical_pnn@idents)
+
+##### Remove unwanted clusters from CellChat -------
+cellchat_wt_cortical_pnn <- subsetCellChat_fixed(cellchat_wt_cortical_pnn, idents.use = c("CSN Type I", "CSN Type II", "Endothelial", "Leptomeningeal FB", "Meningeal FB"), invert = TRUE)
+cellchat_ko_cortical_pnn <- subsetCellChat_fixed(cellchat_ko_cortical_pnn, idents.use = c("CSN Type I", "CSN Type II", "Endothelial", "Leptomeningeal FB", "Meningeal FB"), invert = TRUE)
+
+##### Merge objects and re-compute centrality --------
+# For WT
+cellchat_wt_cortical_pnn <- netAnalysis_computeCentrality(cellchat_wt_cortical_pnn, slot.name = "netP")
+# For KO
+cellchat_ko_cortical_pnn <- netAnalysis_computeCentrality(cellchat_ko_cortical_pnn, slot.name = "netP")
+
+# List your CellChat objects
+object.list_cortical_new <- list(WT = cellchat_wt_cortical_pnn, KO = cellchat_ko_cortical_pnn)
+
+# Merge for comparison
+cellchat_merged_cortical_pnn <- mergeCellChat(object.list_cortical_new, add.names = names(object.list_cortical_new))
+
+### CHECK LEVELS
+levels(cellchat_merged_cortical_pnn@idents$joint)
+levels(cellchat_wt_cortical_pnn@idents)
+levels(cellchat_ko_cortical_pnn@idents)
+
+### Interaction weight and counts ------------------
+
+# List your CellChat objects
+# Your original list of CellChat objects
+object.list_cortical_pnn <- list(WT = cellchat_wt_cortical_pnn, KO = cellchat_ko_cortical_pnn)
+
+### Interaction number and weight
+
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_diffInteraction(cellchat_merged_cortical_pnn, label.edge= F, weight.scale = T)
+netVisual_diffInteraction(cellchat_merged_cortical_pnn, label.edge= F, weight.scale = T, measure = "weight")
+
+gg1 <- netVisual_heatmap(cellchat_merged_cortical_pnn)
+gg2 <- netVisual_heatmap(cellchat_merged_cortical_pnn, measure = "weight")
+gg1 + gg2
+png(filename = "interaction_weight_cortical_pnn.png", width = 8, height = 6, units = "in", res = 600)
+gg2
+dev.off()
+
+## Quantify the matrix
+# 1. Extract the raw count and weight matrices for each group
+nets <- cellchat_merged_cortical_pnn@net       # list of two elements
+mat_count_ctrl   <- nets[[1]]$count         # WT counts
+mat_count_ko     <- nets[[2]]$count         # KO counts
+mat_weight_ctrl  <- nets[[1]]$weight        # WT weights
+mat_weight_ko    <- nets[[2]]$weight        # KO weights
+
+# 2. Compute differential matrices (KO minus WT)
+diff_count  <- mat_count_ko  - mat_count_ctrl
+diff_weight <- mat_weight_ko - mat_weight_ctrl
+
+# 3. (Optional) Assign row/column names if lost
+rownames(diff_count)  <- rownames(mat_count_ctrl)
+colnames(diff_count)  <- colnames(mat_count_ctrl)
+rownames(diff_weight) <- rownames(mat_weight_ctrl)
+colnames(diff_weight) <- colnames(mat_weight_ctrl)
+
+# 4. Save to CSV for inspection
+write.csv(diff_count,
+          "netVisual_diff_counts_KO_vs_WT_pnn.csv",
+          row.names = TRUE)
+write.csv(diff_weight,
+          "netVisual_diff_weights_KO_vs_WT_pnn.csv",
+          row.names = TRUE)
+
+
+### Information flow --------
+gg1 <- rankNet(cellchat_merged_cortical_pnn, mode = "comparison", stacked = T, do.stat = TRUE)
+gg2 <- rankNet(cellchat_merged_cortical_pnn, mode = "comparison", stacked = F, do.stat = TRUE)
+gg1 + gg2
+
+#### Similarity ------
+cellchat_merged_cortical_pnn <- computeNetSimilarityPairwise(cellchat_merged_cortical_pnn, type = "functional")
+cellchat_merged_cortical_pnn <- netEmbedding(cellchat_merged_cortical_pnn, type = "functional", umap.method = "uwot")
+cellchat_merged_cortical_pnn <- netClustering(cellchat_merged_cortical_pnn, type = "functional", do.parallel = FALSE)
+png(filename = "similarity_functional_cortical_pnn.png", width = 6, height = 6, units = "in", res = 600)
+rankSimilarity(cellchat_merged_cortical_pnn, type = "functional")
+dev.off()
+
+cellchat_merged_cortical_pnn <- computeNetSimilarityPairwise(cellchat_merged_cortical_pnn, type = "structural")
+cellchat_merged_cortical_pnn <- netEmbedding(cellchat_merged_cortical_pnn, type = "structural", umap.method = "uwot")
+cellchat_merged_cortical_pnn <- netClustering(cellchat_merged_cortical_pnn, type = "structural", do.parallel = FALSE)
+png(filename = "similarity_structural_cortical_pnn.png", width = 6, height = 6, units = "in", res = 600)
+rankSimilarity(cellchat_merged_cortical_pnn, type = "structural")
+dev.off()
+
+
+#### Extract and plot delta for bubble plot [with filter!!!] ------
+# ---- Libraries
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(tibble)
+library(purrr)
+library(patchwork)
+library(ggnewscale)  # multiple fill scales
+
+# ---- Parameters 
+thresh <- 0.05  # p-value cutoff to mimic subsetCommunication significance
+
+# ---- Helpers for significance filtering (match subsetCommunication) 
+mask_prob_by_pval <- function(cellchat_net, sources, targets, thresh = 0.05) {
+  prob <- cellchat_net$prob
+  pval <- cellchat_net$pval
+  stopifnot(identical(dim(prob), dim(pval)))
+  prob_masked <- prob
+  bad <- !(pval <= thresh) | is.na(pval)
+  prob_masked[bad] <- 0
+  list(
+    prob = prob_masked,
+    pathways = dimnames(prob_masked)[[3]],
+    src_names = dimnames(prob_masked)[[1]][sources],
+    tgt_names = dimnames(prob_masked)[[2]][targets]
+  )
+}
+
+extract_probs_sig <- function(cellchat_net, sources, targets, thresh = 0.05) {
+  m <- mask_prob_by_pval(cellchat_net, sources, targets, thresh)
+  purrr::map_dfr(seq_along(m$pathways), function(i) {
+    mat <- m$prob[sources, targets, i, drop = FALSE]
+    as_tibble(mat, rownames = "Source") |>
+      pivot_longer(-Source, names_to = "Target", values_to = "prob") |>
+      mutate(Pathway = m$pathways[i])
+  })
+}
+
+# ---- Name-based addressing to match chord clusters
+sources_name  <- "PV+ Int"
+targets_names <- c("OPC", "Perineuronal Oligo", "New Oligo", "Myelinating Oligo")
+
+dimn_WT <- dimnames(cellchat_merged_cortical_pnn@net$WT$prob)
+sources_idx <- which(dimn_WT[[1]] == sources_name)
+targets_idx <- match(targets_names, dimn_WT[[2]])
+
+# ---- Extract masked probabilities and compute Δ = KO − WT 
+prob_wt <- extract_probs_sig(cellchat_merged_cortical_pnn@net$WT, sources_idx, targets_idx, thresh)
+prob_ko <- extract_probs_sig(cellchat_merged_cortical_pnn@net$KO, sources_idx, targets_idx, thresh)
+
+delta_df <- left_join(prob_wt, prob_ko,
+                      by = c("Source","Target","Pathway"),
+                      suffix = c("_WT","_KO")) |>
+  mutate(delta    = prob_KO - prob_WT,
+         CellType = str_extract(Target, "^[^.]+"),
+         Pair     = Target)
+
+# Optional: enforce cluster order
+cell_type_order <- c("OPC","Perineuronal Oligo", "New Oligo","Myelinating Oligo")
+delta_df$CellType <- factor(delta_df$CellType, levels = cell_type_order)
+
+# ---- Clean ligand–receptor pair labels
+clean_pair <- function(full_target) {
+  pair <- sub("^[^.]+\\.", "", full_target)
+  parts <- strsplit(pair, "_")[[1]]
+  if (length(parts) == 2) {
+    paste(parts[1], "-", parts[2])
+  } else if (length(parts) == 3) {
+    paste(parts[1], "- (", parts[2], " + ", parts[3], ")")
+  } else {
+    pair
+  }
+}
+delta_df <- delta_df |> mutate(LRP = sapply(Pair, clean_pair))
+
+# ---- Top 10 PER cluster (by |Δ|) 
+top_inc_per_type <- delta_df |>
+  filter(delta > 0) |>
+  group_by(CellType) |>
+  slice_max(order_by = abs(delta), n = 10, with_ties = FALSE) |>
+  ungroup()
+
+top_dec_per_type <- delta_df |>
+  filter(delta < 0) |>
+  group_by(CellType) |>
+  slice_max(order_by = abs(delta), n = 10, with_ties = FALSE) |>
+  ungroup()
+
+# ---- Verify per-cluster counts (should be ≤ 10 per cluster) 
+verify_top10 <- function(df, label) {
+  cat("\nTop-10 verification for: ", label, "\n", sep = "")
+  print(df |>
+          count(CellType, name = "n") |>
+          arrange(CellType))
+  stopifnot(all(df |>
+                  count(CellType) |>
+                  pull(n) <= 10))
+}
+verify_top10(top_inc_per_type, "Increased (Δ>0)")
+verify_top10(top_dec_per_type, "Decreased (Δ<0)")
+
+# ---- Outline color by sign
+add_outline_cols <- function(df) {
+  df |>
+    mutate(outline_col = ifelse(delta > 0, "#b2182b",
+                                ifelse(delta < 0, "#2166ac", NA)))
+}
+top_inc_per_type <- add_outline_cols(top_inc_per_type)
+top_dec_per_type <- add_outline_cols(top_dec_per_type)
+
+increase_pal <- c(
+  "#fff7bc",      # yellow
+  "#fec44f",      # orange
+  "#fb6a4a",      # red
+  "#de2d26",      # strong red
+  "#b2182b"       # dark crimson
+)
+
+decrease_pal <- c(
+  "#fff7bc",       # yellow
+  "#c3eec6",       # soft green
+  "#9ecae1",       # light blue
+  "#3182bd",       # medium blue
+  "#2166ac"        # dark blue (your blue)
+)
+
+# ---- Plotting with two separate fill scales (initialize with data to avoid aes errors) 
+plot_two_scales <- function(df, title) {
+  p <- ggplot(df, aes(x = CellType, y = LRP))
+  
+  # Positive layer: red-heavy sequential scale (Δ > 0)
+  df_pos <- df |> filter(delta > 0)
+  if (nrow(df_pos) > 0) {
+    p <- p +
+      geom_point(data = df_pos,
+                 aes(fill = delta, colour = outline_col),
+                 shape = 21, size = 7, stroke = 0.2, alpha = 0.95) +
+      scale_fill_gradientn(colors = increase_pal,
+                           name = "Δ > 0 (KO − WT)",
+                           na.value = "transparent")
+  }
+  
+  # New fill scale for the negative layer
+  p <- p + ggnewscale::new_scale_fill()
+  
+  # Negative layer: blue-heavy sequential scale (map fill to -delta so magnitude grows with depth)
+  df_neg <- df |> filter(delta < 0)
+  if (nrow(df_neg) > 0) {
+    p <- p +
+      geom_point(data = df_neg,
+                 aes(fill = -delta, colour = outline_col),
+                 shape = 21, size = 7, stroke = 0.2, alpha = 0.95) +
+      scale_fill_gradientn(colors = decrease_pal,
+                           name = "Δ < 0 (KO − WT)",
+                           na.value = "transparent")
+  }
+  
+  p +
+    scale_color_identity(guide = "none") +
+    labs(title = title, x = "Target Cell Type", y = "Ligand–Receptor Pair") +
+    theme_minimal(base_size = 14) +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.grid = element_blank(),
+          axis.text.x = element_text(angle = 0, hjust = 0.5),
+          axis.text.y = element_text(size = 10))
+}
+
+p_top_inc <- plot_two_scales(top_inc_per_type, "Top 10 Increased per Cluster (p-filtered)")
+p_top_dec <- plot_two_scales(top_dec_per_type, "Top 10 Decreased per Cluster (p-filtered)")
+
+(p_top_inc | p_top_dec) +
+  plot_annotation(title = paste0("KO vs WT: Top 10 PV→Oligo Interactions per Cluster (p ≤ ", thresh, ")"),
+                  subtitle = "Sequential scales: yellow→orange→red for increases; yellow→light blue→dark blue for decreases")
+
+png(filename = "differential_bubble_plot_PV_to_oligo.png", width = 20, height = 8, units = "in", res = 600)
+(p_top_inc | p_top_dec) +
+  plot_annotation(title = paste0("KO vs WT: Top 10 PV→Oligo Interactions per Cluster (p ≤ ", thresh, ")"),
+                  subtitle = "Sequential scales: yellow→orange→red for increases; yellow→light blue→dark blue for decreases")
+dev.off()
+
+
+# ---- Optional: built-in ColorBrewer sequential scales instead of custom 
+# Replace the two scale_fill_gradientn() lines above with:
+#   scale_fill_distiller(palette = "YlOrRd", direction = 1, name = "Δ > 0 (KO − WT)")
+# and after new_scale_fill():
+#   scale_fill_distiller(palette = "YlGnBu", direction = 1, name = "Δ < 0 (KO − WT)")
+# (distiller maps continuous data using Brewer palettes if preferred)
+
+
+
+
+
+
+#### Direction-independent bubble plot with filter -------
+thresh        <- 0.05
+direction     <- "incoming"  # "outgoing" (PV -> oligos) or "incoming" (oligos -> PV)
+sources_names <- c("PV+ Int")
+cluster_names <- c("OPC", "Perineuronal Oligo", "New Oligo", "Myelinating Oligo")  # fixed x-axis order
+
+# ---- String helpers (head = before first dot; tail = after first dot)
+head_token <- function(x) sub("\\..*$", "", x)
+tail_token <- function(x) sub("^[^.]+\\.", "", x)
+has_dot    <- function(x) grepl("\\.", x)
+
+# Pretty LR formatter:
+#  "A_B"     -> "A + B"
+#  "A_B_C"   -> "A + (B + C)"
+#  length>=3 generalized to first + (rest joined by +)
+lrp_pretty_plus <- function(full_label) {
+  # Use the substring after the first dot if present
+  tail <- sub("^[^.]+\\.", "", full_label)
+  if (identical(tail, full_label)) tail <- full_label
+  parts <- strsplit(tail, "_", fixed = TRUE)[[1]]
+  if (length(parts) <= 1L || anyNA(parts)) {
+    tail
+  } else if (length(parts) == 2L) {
+    paste(parts[1], parts[2], sep = " + ")
+  } else {
+    paste0(parts[1], " + (", paste(parts[-1], collapse = " + "), ")")
+  }
+}
+
+# ---- Significance masking (mimics subsetCommunication p-value filter)
+mask_prob_by_pval <- function(cellchat_net, thresh = 0.05) {
+  prob <- cellchat_net$prob
+  pval <- cellchat_net$pval
+  stopifnot(identical(dim(prob), dim(pval)))
+  bad <- !(pval <= thresh) | is.na(pval)
+  prob_masked <- prob
+  prob_masked[bad] <- 0
+  list(prob = prob_masked, dnames = dimnames(prob_masked))
+}
+
+# ---- Extract selected sender/receiver blocks across all pathways to long format
+extract_long <- function(cellchat_net, send_idx, recv_idx, thresh = 0.05) {
+  m <- mask_prob_by_pval(cellchat_net, thresh)
+  paths <- m$dnames[[3]]
+  purrr::map_dfr(seq_along(paths), function(i) {
+    mat <- m$prob[send_idx, recv_idx, i, drop = FALSE]
+    tibble::as_tibble(mat, rownames = "Source") |>
+      tidyr::pivot_longer(-Source, names_to = "Target", values_to = "prob") |>
+      dplyr::mutate(Pathway = paths[i])
+  })
+}
+
+# ---- Build indices by matching head tokens (sender × receiver × pair tensor)
+dimn_WT <- dimnames(cellchat_merged_cortical_pnn@net$WT$prob)
+rnames  <- dimn_WT[[1]]          # senders
+cnames  <- dimn_WT[[2]]          # receivers
+rhead   <- head_token(rnames)    # sender heads (cell-type labels)
+chead   <- head_token(cnames)    # receiver heads (cell-type labels)
+
+if (direction == "outgoing") {
+  # PV sends to oligos: rows head == PV; cols head in cluster_names
+  send_idx <- which(rhead %in% sources_names)
+  recv_idx <- which(chead %in% cluster_names)
+  x_from   <- "Target"
+  x_label  <- "Target Cell Type"
+} else {
+  # Oligos send to PV: rows head in cluster_names; cols head == PV
+  send_idx <- which(rhead %in% cluster_names)
+  recv_idx <- which(chead %in% sources_names)
+  x_from   <- "Source"
+  x_label  <- "Source Cell Type"
+}
+
+stopifnot(length(send_idx) > 0, length(recv_idx) > 0)
+
+# ---- Extract and compute Δ = KO − WT
+wt_long <- extract_long(cellchat_merged_cortical_pnn@net$WT, send_idx, recv_idx, thresh)
+ko_long <- extract_long(cellchat_merged_cortical_pnn@net$KO, send_idx, recv_idx, thresh)
+
+delta_df <- dplyr::left_join(
+  wt_long, ko_long,
+  by = c("Source","Target","Pathway"),
+  suffix = c("_WT","_KO")
+) |>
+  dplyr::mutate(delta = prob_KO - prob_WT)
+
+# ---- Derive columns for plotting
+# Cluster: head from the x side (Target for outgoing, Source for incoming)
+# LRP: pretty-printed tail from the same side string (falls back to full Pathway if needed)
+delta_df <- delta_df |>
+  dplyr::mutate(
+    Source_head = head_token(Source),
+    Target_head = head_token(Target),
+    PairStr = if (x_from == "Target") Target else Source,
+    CellType = if (x_from == "Target") Target_head else Source_head,
+    LRP = ifelse(has_dot(PairStr),
+                 vapply(PairStr, lrp_pretty_plus, character(1)),
+                 vapply(Pathway,  lrp_pretty_plus, character(1)))
+  )
+
+# ---- Lock x to desired columns (keeps exactly one column per cluster in order)
+delta_df <- delta_df |>
+  dplyr::filter(CellType %in% cluster_names)
+delta_df$CellType <- factor(delta_df$CellType, levels = cluster_names)
+
+# ---- Top 10 per cluster by |Δ|, split by sign
+top_inc_per_type <- delta_df |>
+  dplyr::filter(delta > 0) |>
+  dplyr::group_by(CellType) |>
+  dplyr::slice_max(order_by = abs(delta), n = 10, with_ties = FALSE) |>
+  dplyr::ungroup()
+
+top_dec_per_type <- delta_df |>
+  dplyr::filter(delta < 0) |>
+  dplyr::group_by(CellType) |>
+  dplyr::slice_max(order_by = abs(delta), n = 10, with_ties = FALSE) |>
+  dplyr::ungroup()
+
+# ---- Outline color by sign
+add_outline_cols <- function(df) {
+  dplyr::mutate(df, outline_col = dplyr::case_when(
+    delta > 0 ~ "#b2182b",
+    delta < 0 ~ "#2166ac",
+    TRUE ~ NA_character_
+  ))
+}
+top_inc_per_type <- add_outline_cols(top_inc_per_type)
+top_dec_per_type <- add_outline_cols(top_dec_per_type)
+
+# ---- Palettes
+increase_pal <- c("#fff7bc","#fec44f","#fb6a4a","#de2d26","#b2182b")
+decrease_pal <- c("#fff7bc","#c3eec6","#9ecae1","#3182bd","#2166ac")
+
+# ---- Plotters (separate panels: no need for ggnewscale inside each)
+plot_sign <- function(df, legend_title, x_label, pal, fill_var) {
+  ggplot2::ggplot(df, ggplot2::aes(x = CellType, y = LRP)) +
+    ggplot2::geom_point(ggplot2::aes(fill = !!fill_var, colour = outline_col),
+                        shape = 21, size = 7, stroke = 0.3, alpha = 0.95) +
+    ggplot2::scale_fill_gradientn(colors = pal, name = legend_title, na.value = "transparent") +
+    ggplot2::scale_color_identity(guide = "none") +
+    ggplot2::scale_x_discrete(limits = cluster_names, drop = FALSE) +
+    ggplot2::labs(x = x_label, y = "Ligand–Receptor Pair") +
+    ggplot2::theme_minimal(base_size = 14) +
+    ggplot2::theme(
+      text = ggplot2::element_text(color = "black"),
+      axis.text = ggplot2::element_text(color = "black"),
+      axis.title = ggplot2::element_text(color = "black"),
+      legend.text = ggplot2::element_text(color = "black"),
+      legend.title = ggplot2::element_text(color = "black"),
+      strip.text = ggplot2::element_text(color = "black"),
+      panel.grid = ggplot2::element_blank(),
+      axis.text.x = ggplot2::element_text(angle = 45, hjust = 1, vjust = 1, color = "black"),
+      axis.text.y = ggplot2::element_text(size = 10, color = "black")
+    )
+}
+
+p_top_inc <- if (nrow(top_inc_per_type) > 0) {
+  plot_sign(top_inc_per_type, "Δ > 0 (KO − WT)", x_label, increase_pal, rlang::quo(delta))
+} else {
+  ggplot2::ggplot() + ggplot2::theme_void() + ggplot2::ggtitle("No increases pass filters")
+}
+
+p_top_dec <- if (nrow(top_dec_per_type) > 0) {
+  plot_sign(top_dec_per_type, "Δ < 0 (KO − WT)", x_label, decrease_pal, rlang::quo(-delta))
+} else {
+  ggplot2::ggplot() + ggplot2::theme_void() + ggplot2::ggtitle("No decreases pass filters")
+}
+
+# ---- Combine panels side-by-side
+title_txt <- if (direction == "outgoing") {
+  paste0("KO vs WT: Top 10 PV→Oligo (outgoing) per cluster (p ≤ ", thresh, ")")
+} else {
+  paste0("KO vs WT: Top 10 Oligo→PV (incoming) per cluster (p ≤ ", thresh, ")")
+}
+
+(p_top_inc | p_top_dec) +
+  patchwork::plot_annotation(
+    title    = title_txt,
+    subtitle = "Left: increases (red); Right: decreases (blue)"
+  )
+
+# ---- Optional save
+ggsave("differential_bubble_oligo_to_PV_pnn.pdf", width = 16, height = 8)
+
+# ---- Save the matrix
+# Ensure packages are attached
+library(dplyr)
+library(readr)
+
+cols_keep <- c("CellType","LRP","Pathway","Source","Target","prob_WT","prob_KO","delta")
+
+inc_export <- top_inc_per_type %>%
+  dplyr::mutate(Direction = "Increase", abs_delta = abs(delta)) %>%
+  dplyr::arrange(CellType, dplyr::desc(abs_delta)) %>%
+  dplyr::group_by(CellType) %>%
+  dplyr::mutate(rank = dplyr::row_number()) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(dplyr::all_of(c("Direction","rank", cols_keep)))
+
+dec_export <- top_dec_per_type %>%
+  dplyr::mutate(Direction = "Decrease", abs_delta = abs(delta)) %>%
+  dplyr::arrange(CellType, dplyr::desc(abs_delta)) %>%
+  dplyr::group_by(CellType) %>%
+  dplyr::mutate(rank = dplyr::row_number()) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(dplyr::all_of(c("Direction","rank", cols_keep)))
+
+# Combine and write
+all_export <- dplyr::bind_rows(inc_export, dec_export) %>%
+  dplyr::arrange(CellType, Direction, rank)
+
+readr::write_csv(all_export, "top10_LRP_all.csv")
+
+
+### Complex heatmaps ----------
+# Data pre-processing
+object.list_cortical_pnn <- list(WT = cellchat_wt_cortical_pnn, KO = cellchat_ko_cortical_pnn)
+length(object.list_cortical_pnn[[1]]@netP$pathways)
+length(object.list_cortical_pnn[[2]]@netP$pathways)
+
+# # Also check the union you pass to signaling:
+# length(pathway.union_cortical_pnn)
+# print(pathway.union_cortical_pnn)
+
+# Re-check
+object.list_cortical_pnn <- list(WT = cellchat_wt_cortical_pnn, KO = cellchat_ko_cortical_pnn)
+
+for (nm in names(object.list_cortical_pnn)) {
+  x <- object.list_cortical_pnn[[nm]]
+  
+  # If you have not done these on the subset, re-run:
+  x <- subsetData(x)  # ensures data slots match current idents
+  x <- identifyOverExpressedGenes(x)
+  x <- identifyOverExpressedInteractions(x)
+  # projectData(...) if you used it originally (e.g., human PPI) 
+  # x <- projectData(x, PPI.human)  # uncomment if needed
+  
+  x <- computeCommunProb(x)                  # computes communication probability
+  x <- filterCommunication(x)                # filters low-probability interactions
+  x <- computeCommunProbPathway(x)           # builds pathway-level network in x@netP
+  x <- aggregateNet(x)                       # aggregates net and netP
+  x <- netAnalysis_computeCentrality(x, slot.name = "netP")  # centrality for pathways
+  
+  object.list_cortical_pnn[[nm]] <- x
+}
+
+# Side-by-side and one-plot
+
+i = 1
+pathway.union_cortical_pnn <- union(object.list_cortical_pnn[[i]]@netP$pathways, object.list_cortical_pnn[[i+1]]@netP$pathways)
+
+# Outgoing
+# combining all the identified signaling pathways from different datasets 
+
+ht1_out = netAnalysis_signalingRole_heatmap(object.list_cortical_pnn[[i]], pattern = "outgoing", signaling = pathway.union_cortical_pnn, 
+                                            title = names(object.list_cortical_pnn)[i], width = 8, height = 20, color.heatmap = "GnBu")
+ht2_out = netAnalysis_signalingRole_heatmap(object.list_cortical_pnn[[i+1]], pattern = "outgoing", signaling = pathway.union_cortical_pnn, 
+                                            title = names(object.list_cortical_pnn)[i+1], width = 8, height = 20, color.heatmap = "GnBu")
+draw(ht1_out + ht2_out, ht_gap = unit(1, "cm"))
+
+# Extract the matrix data from the heatmaps
+mat1_out <- ht1_out@matrix
+mat2_out <- ht2_out@matrix
+
+# Calculate the difference matrix
+mat_diff_out <- mat1_out - mat2_out
+mat_diff_out[is.na(mat_diff_out)] <- 0
+mat_diff_out[is.infinite(mat_diff_out)] <- 0
+col_fun <- colorRamp2(
+  c(min(mat_diff_out), 0, max(mat_diff_out)),
+  c("#2166ac", "white", "#b2182b")
+)
+
+# Create a heatmap for the difference
+ht_diff_out <- Heatmap(
+  mat_diff_out,
+  name = "Difference",
+  col = col_fun,
+  width = unit(19, "cm"),
+  height = unit(30, "cm")
+)
+
+# Draw the difference heatmap
+draw(ht_diff_out)
+
+# Incoming
+ht1_in = netAnalysis_signalingRole_heatmap(object.list_cortical_pnn[[i]], pattern = "incoming", signaling = pathway.union_cortical_pnn, title = names(object.list_cortical_pnn)[i], width = 8, height = 20, color.heatmap = "GnBu")
+ht2_in = netAnalysis_signalingRole_heatmap(object.list_cortical_pnn[[i+1]], pattern = "incoming", signaling = pathway.union_cortical_pnn, title = names(object.list_cortical_pnn)[i+1], width = 8, height = 20, color.heatmap = "GnBu")
+draw(ht1_in + ht2_in, ht_gap = unit(1, "cm"))
+
+# Extract the matrix data from the heatmaps
+mat1_in <- ht1_in@matrix
+mat2_in <- ht2_in@matrix
+
+# Calculate the difference matrix
+mat_diff_in <- mat1_in - mat2_in
+mat_diff_in[is.na(mat_diff_in)] <- 0
+mat_diff_in[is.infinite(mat_diff_in)] <- 0
+col_fun <- colorRamp2(
+  c(min(mat_diff_in), 0, max(mat_diff_in)),
+  c("#2166ac", "white", "#b2182b")
+)
+
+# Create a heatmap for the difference
+ht_diff_in <- Heatmap(
+  mat_diff_in,
+  name = "Difference",
+  col = col_fun,
+  width = unit(19, "cm"),
+  height = unit(30, "cm")
+)
+
+# Draw the difference heatmap
+draw(ht_diff_in)
+
+# Both outgoing and incoming
+ht1_all = netAnalysis_signalingRole_heatmap(object.list_cortical_pnn[[i]], pattern = "all", signaling = pathway.union_cortical_pnn, title = names(object.list_cortical_pnn)[i], width = 8, height = 20, color.heatmap = "OrRd")
+ht2_all = netAnalysis_signalingRole_heatmap(object.list_cortical_pnn[[i+1]], pattern = "all", signaling = pathway.union_cortical_pnn, title = names(object.list_cortical_pnn)[i+1], width = 8, height = 20, color.heatmap = "OrRd")
+draw(ht1_all + ht2_all, ht_gap = unit(1, "cm"))#
+
+# Extract the matrix data from the heatmaps
+mat1_all <- ht1_all@matrix
+mat2_all <- ht2_all@matrix
+
+# Calculate the difference matrix
+mat_diff_all <- mat1_all - mat2_all
+mat_diff_all[is.na(mat_diff_all)] <- 0
+mat_diff_all[is.infinite(mat_diff_all)] <- 0
+col_fun <- colorRamp2(
+  c(min(mat_diff_all), 0, max(mat_diff_all)),
+  c("#2166ac", "white", "#b2182b")
+)
+
+# Create a heatmap for the difference
+ht_diff_all <- Heatmap(
+  mat_diff_all,
+  name = "Difference",
+  col = col_fun,
+  width = unit(19, "cm"),
+  height = unit(30, "cm")
+)
+
+# Draw the difference heatmap
+draw(ht_diff_all)
+
+
+# PNG at 300 dpi, 11x14 inches
+png("diff_heatmap_all_cortical_pnn.png", width = 11, height = 14, units = "in", res = 300)
+draw(ht_diff_all)
+dev.off()
+
+png("diff_heatmap_in_cortical_pnn.png", width = 11, height = 14, units = "in", res = 300)
+draw(ht_diff_in)
+dev.off()
+
+png("diff_heatmap_out_cortical_pnn.png", width = 11, height = 14, units = "in", res = 300)
+draw(ht_diff_out)
+dev.off()
+
+
+
+### Complex heatmaps reduced to PNN relevant stuff ----
+### Focused pathways (order preserved)
+target_pathways <- c(
+  "TENASCIN","SEMA3","RELN","NRG","CSPG4","CNTN","L1CAM","EPHA","EPHB","LAMININ"
+)
+
+# Compute available pathways across datasets and focus on targets
+available_union <- Reduce(union, lapply(object.list_cortical_pnn, function(x) x@netP$pathways))
+pathway.focus <- target_pathways[target_pathways %in% available_union]
+if (length(pathway.focus) == 0) stop("None of the target pathways were found in netP$pathways")
+
+# Convenience alias
+i <- 1
+
+### OUTGOING (focused)
+ht1_out <- netAnalysis_signalingRole_heatmap(
+  object.list_cortical_pnn[[i]], pattern = "outgoing",
+  signaling = pathway.focus, title = names(object.list_cortical_pnn)[i],
+  width = 8, height = 20, color.heatmap = "GnBu"
+)
+ht2_out <- netAnalysis_signalingRole_heatmap(
+  object.list_cortical_pnn[[i+1]], pattern = "outgoing",
+  signaling = pathway.focus, title = names(object.list_cortical_pnn)[i+1],
+  width = 8, height = 20, color.heatmap = "GnBu"
+)
+draw(ht1_out + ht2_out, ht_gap = unit(1, "cm"))
+
+# Difference (outgoing)
+mat1_out <- ht1_out@matrix
+mat2_out <- ht2_out@matrix
+mat_diff_out <- mat1_out - mat2_out
+mat_diff_out[is.na(mat_diff_out) | is.infinite(mat_diff_out)] <- 0
+col_fun_out <- colorRamp2(c(min(mat_diff_out), 0, max(mat_diff_out)), c("#2166ac","white","#b2182b"))
+ht_diff_out <- Heatmap(mat_diff_out, name = "Difference", col = col_fun_out,
+                       width = unit(10, "cm"), height = unit(7, "cm"))
+draw(ht_diff_out)
+
+### INCOMING (focused)
+ht1_in <- netAnalysis_signalingRole_heatmap(
+  object.list_cortical_pnn[[i]], pattern = "incoming",
+  signaling = pathway.focus, title = names(object.list_cortical_pnn)[i],
+  width = 8, height = 20, color.heatmap = "GnBu"
+)
+ht2_in <- netAnalysis_signalingRole_heatmap(
+  object.list_cortical_pnn[[i+1]], pattern = "incoming",
+  signaling = pathway.focus, title = names(object.list_cortical_pnn)[i+1],
+  width = 8, height = 20, color.heatmap = "GnBu"
+)
+draw(ht1_in + ht2_in, ht_gap = unit(1, "cm"))
+
+# Difference (incoming)
+mat1_in <- ht1_in@matrix
+mat2_in <- ht2_in@matrix
+mat_diff_in <- mat1_in - mat2_in
+mat_diff_in[is.na(mat_diff_in) | is.infinite(mat_diff_in)] <- 0
+col_fun_in <- colorRamp2(c(min(mat_diff_in), 0, max(mat_diff_in)), c("#2166ac","white","#b2182b"))
+ht_diff_in <- Heatmap(mat_diff_in, name = "Difference", col = col_fun_in,
+                      width = unit(10, "cm"), height = unit(7, "cm"))
+draw(ht_diff_in)
+
+### ALL (focused)
+ht1_all <- netAnalysis_signalingRole_heatmap(
+  object.list_cortical_pnn[[i]], pattern = "all",
+  signaling = pathway.focus, title = names(object.list_cortical_pnn)[i],
+  width = 8, height = 20, color.heatmap = "OrRd"
+)
+ht2_all <- netAnalysis_signalingRole_heatmap(
+  object.list_cortical_pnn[[i+1]], pattern = "all",
+  signaling = pathway.focus, title = names(object.list_cortical_pnn)[i+1],
+  width = 8, height = 20, color.heatmap = "OrRd"
+)
+draw(ht1_all + ht2_all, ht_gap = unit(1, "cm"))
+
+# Difference (all)
+mat1_all <- ht1_all@matrix
+mat2_all <- ht2_all@matrix
+mat_diff_all <- mat1_all - mat2_all
+mat_diff_all[is.na(mat_diff_all) | is.infinite(mat_diff_all)] <- 0
+col_fun_all <- colorRamp2(c(min(mat_diff_all), 0, max(mat_diff_all)), c("#2166ac","white","#b2182b"))
+ht_diff_all <- Heatmap(mat_diff_all, name = "Difference", col = col_fun_all,
+                       width = unit(10, "cm"), height = unit(7, "cm"))
+draw(ht_diff_all)
+
+
+png("diff_heatmap_all_cortical_pnn_PNN.png", width = 8, height = 8, units = "in", res = 300)
+draw(ht_diff_all); dev.off()
+png("diff_heatmap_in_cortical_pnn_PNN.png", width = 8, height = 8, units = "in", res = 300)
+draw(ht_diff_in); dev.off()
+png("diff_heatmap_out_cortical_pnn_PNN.png", width = 8, height = 8, units = "in", res = 300)
+draw(ht_diff_out); dev.off()
+
+
+### Scatter plot of interaction strength -------------
+num.link <- sapply(object.list_cortical_pnn, function(x) {rowSums(x@net$count) + colSums(x@net$count)-diag(x@net$count)})
+weight.MinMax <- c(min(num.link), max(num.link)) # control the dot size in the different datasets
+gg <- list()
+for (i in 1:length(object.list_cortical_pnn)) {
+  gg[[i]] <- netAnalysis_signalingRole_scatter(object.list_cortical_pnn[[i]], title = names(object.list_cortical_pnn)[i], weight.MinMax = weight.MinMax)
+}
+patchwork::wrap_plots(plots = gg)
+
+
+
+### Scatter plot of cluster-based signaling changes ----------------------
+gg1 <- netAnalysis_signalingChanges_scatter(cellchat_merged_cortical_pnn, idents.use = "PV+ Int", signaling.exclude = "MIF")
+#gg2 <- netAnalysis_signalingChanges_scatter(cellchat_merged_cortical_pnn, idents.use = "SST+ Int", signaling.exclude = "MIF")
+#gg3 <- netAnalysis_signalingChanges_scatter(cellchat_merged_cortical_pnn, idents.use = "VIP+ Int", signaling.exclude = "MIF")
+
+gg4 <- netAnalysis_signalingChanges_scatter(cellchat_merged_cortical_pnn, idents.use = "OPC", signaling.exclude = "MIF")
+gg5 <- netAnalysis_signalingChanges_scatter(cellchat_merged_cortical_pnn, idents.use = "New Oligo", signaling.exclude = "MIF")
+gg6 <- netAnalysis_signalingChanges_scatter(cellchat_merged_cortical_pnn, idents.use = "Myelinating Oligo", signaling.exclude = "MIF")
+gg7 <- netAnalysis_signalingChanges_scatter(cellchat_merged_cortical_pnn, idents.use = "Astrocyte", signaling.exclude = "MIF")
+gg8 <- netAnalysis_signalingChanges_scatter(cellchat_merged_cortical_pnn, idents.use = "Perineuronal Oligo", signaling.exclude = "MIF")
+print(gg1)
+#patchwork::wrap_plots(plots = list(gg1,gg2,gg3))
+patchwork::wrap_plots(plots = list(gg4,gg8, gg5,gg6))
+
+
+
+
+### Extra chord diagram --------------------------
+par(mfrow = c(1, 2), xpd=TRUE)
+# compare all the interactions sending from PVs to OPCs
+for (i in 1:length(object.list_cortical_pnn)) {
+  netVisual_chord_gene(object.list_cortical_pnn[[i]], sources.use = 9, targets.use = c(14), #lab.cex = 0.3, 
+                       title.name = paste0("Signaling from PV+ interneurons - ", names(object.list_cortical_pnn)[i]), small.gap = 4.5, big.gap=8)
+}
+
+# show all the significant signaling pathways from PV INs to oligos
+par(mfrow = c(1, 2), xpd=TRUE)
+for (i in 1:length(object.list_cortical_pnn)) {
+  netVisual_chord_gene(object.list_cortical_pnn[[i]], sources.use = c(9), targets.use = c(13, 14,15,16),slot.name = "netP", title.name = paste0("Signaling pathways sending from PV+ interneurons - ", names(object.list_cortical_pnn)[i]), legend.pos.x = 10, small.gap = 5, big.gap=8)
+}
+
+
+
+
+### Differential interaction plot with arrows between clusters -----
+
+suppressPackageStartupMessages({
+  library(CellChat)
+  library(igraph)
+})
+
+par(mfrow = c(1, 1), xpd = NA)
+
+edge_width_max <- 2
+weight_cap     <- 0.2
+arrow_width    <- edge_width_max / 2
+arrow_size     <- 0.3 * edge_width_max
+label_offset_in <- 0.6
+
+# Requested order (cluster 9 first); pass either indices or names
+sources.use <- c(9,12,13,14,15,16)
+targets.use <- c(9,12,13,14,15,16)
+
+# Inputs
+object  <- cellchat_merged_cortical_pnn
+comp    <- c(1, 2)
+measure <- "weight"  # "count" or "weight"
+
+# Access nets and ensure dimnames via idents
+net1 <- object@net[[comp[1]]]
+net2 <- object@net[[comp[2]]]
+mat1 <- net1[[measure]]
+mat2 <- net2[[measure]]
+
+fix_dimnames <- function(m, idents_levels) {
+  if (is.null(rownames(m)) && length(idents_levels) == nrow(m)) rownames(m) <- idents_levels
+  if (is.null(colnames(m)) && length(idents_levels) == ncol(m)) colnames(m) <- idents_levels
+  m
+}
+lvl1 <- if (is.list(object@idents)) levels(object@idents[[comp[1]]]) else levels(object@idents)
+lvl2 <- if (is.list(object@idents)) levels(object@idents[[comp[2]]]) else levels(object@idents)
+mat1 <- fix_dimnames(mat1, lvl1)
+mat2 <- fix_dimnames(mat2, lvl2)
+
+group_names_all <- rownames(mat1)
+if (is.null(group_names_all)) stop("Group names are missing; ensure idents have levels or matrices have dimnames.")
+
+# Map requested indices to names using the original names
+map_to_names <- function(v, names_all) {
+  if (is.numeric(v)) {
+    if (any(v < 1 | v > length(names_all))) stop("Index out of range in sources.use/targets.use")
+    names_all[v]
+  } else {
+    as.character(v)
+  }
+}
+sources_names <- map_to_names(sources.use, group_names_all)
+targets_names <- map_to_names(targets.use, group_names_all)
+
+# Relevel idents so the first requested name becomes the first sector; reorder all 2D nets accordingly
+first_label <- sources_names[1]
+new_levels <- c(first_label, setdiff(group_names_all, first_label))
+
+if (is.list(object@idents)) {
+  for (k in seq_along(object@idents)) {
+    cur_lev <- levels(object@idents[[k]])
+    keep_lev <- new_levels[new_levels %in% cur_lev]
+    object@idents[[k]] <- factor(object@idents[[k]], levels = keep_lev)
+  }
+} else {
+  cur_lev <- levels(object@idents)
+  keep_lev <- new_levels[new_levels %in% cur_lev]
+  object@idents <- factor(object@idents, levels = keep_lev)
+}
+
+mat_names_2d <- c("count","sum","weight","count.merged","weight.merged")
+for (i in seq_along(object@net)) {
+  for (mn in intersect(mat_names_2d, names(object@net[[i]]))) {
+    m <- object@net[[i]][[mn]]
+    rn <- rownames(m); cn <- colnames(m)
+    if (!is.null(rn) && !is.null(cn)) {
+      keep <- new_levels[new_levels %in% rn & new_levels %in% cn]
+      object@net[[i]][[mn]] <- m[keep, keep, drop = FALSE]
+    }
+  }
+}
+
+# Refresh matrices and valid group names after reordering
+net1 <- object@net[[comp[1]]]
+net2 <- object@net[[comp[2]]]
+mat1 <- net1[[measure]]
+mat2 <- net2[[measure]]
+group_names_all <- rownames(mat1)
+
+# Keep only requested names that still exist
+sources_names <- sources_names[sources_names %in% group_names_all]
+targets_names <- targets_names[targets_names %in% group_names_all]
+
+# Plot with default CellChat colors (muted palette from the package); do NOT pass color.use
+netVisual_diffInteraction(
+  object             = object,
+  comparison         = comp,
+  measure            = measure,
+  color.edge         = c("#b2182b", "#2166ac"),
+  weight.scale       = FALSE,
+  edge.weight.max    = weight_cap,
+  edge.width.max     = edge_width_max,
+  sources.use        = sources_names,
+  targets.use        = targets_names,
+  remove.isolate     = TRUE,
+  vertex.label.cex   = 1e-6,
+  vertex.label.color = NA,
+  title.name         = "",
+  margin             = 0.8,
+  alpha.edge         = 1,
+  shape              = "circle",
+  arrow.width        = arrow_width,
+  arrow.size         = arrow_size
+)
+
+# Label placement aligned to plotted order among active nodes
+node_names_sel <- unique(c(sources_names, setdiff(targets_names, sources_names)))
+sub1 <- mat1[node_names_sel, node_names_sel, drop = FALSE]
+sub2 <- mat2[node_names_sel, node_names_sel, drop = FALSE]
+sub1z <- ifelse(is.na(sub1), 0, sub1)
+sub2z <- ifelse(is.na(sub2), 0, sub2)
+
+deg_any <- (rowSums(sub1z != 0) + colSums(sub1z != 0) +
+              rowSums(sub2z != 0) + colSums(sub2z != 0)) > 0
+active_names <- node_names_sel[deg_any]
+
+order_active_names <- unique(c(intersect(sources_names, active_names),
+                               setdiff(intersect(targets_names, active_names),
+                                       intersect(sources_names, active_names))))
+n_active <- length(order_active_names)
+
+if (n_active > 0) {
+  g_dummy <- igraph::make_empty_graph(n = n_active, directed = TRUE)
+  coords  <- igraph::layout_in_circle(g_dummy, order = seq_len(n_active))
+  x <- coords[,1]; y <- coords[,2]
+  theta <- atan2(y, x); ux <- cos(theta); uy <- sin(theta)
+  
+  dx_in <- grconvertX(1, "inches", "user") - grconvertX(0, "inches", "user")
+  dy_in <- grconvertY(1, "inches", "user") - grconvertY(0, "inches", "user")
+  vx <- ux * dx_in; vy <- uy * dy_in
+  vnorm <- sqrt(vx^2 + vy^2)
+  x_lab <- x + label_offset_in * vx / vnorm
+  y_lab <- y + label_offset_in * vy / vnorm
+  
+  deg <- theta * 180 / pi
+  pos_right  <- (deg >= -45 & deg < 45)
+  pos_top    <- (deg >= 45  & deg < 135)
+  pos_left   <- (deg >= 135 | deg <= -135)
+  pos_bottom <- (deg > -135 & deg < -45)
+  
+  adjx <- rep(0.5, n_active); adjy <- rep(0.5, n_active)
+  adjx[pos_right]  <- 0;   adjy[pos_right]  <- 0.5
+  adjx[pos_left]   <- 0.9; adjy[pos_left]   <- 0.5
+  adjx[pos_top]    <- 0.5; adjy[pos_top]    <- 0
+  adjx[pos_bottom] <- 0.5; adjy[pos_bottom] <- 1
+  
+  for (i in seq_len(n_active)) {
+    text(
+      x = x_lab[i], y = y_lab[i], labels = order_active_names[i],
+      adj = c(adjx[i], adjy[i]), srt = 0,
+      cex = 1.3, col = "black", xpd = NA
+    )
+  }
+}
+
+#### Circle interaction map (fix attempt)---------
+suppressPackageStartupMessages({
+  library(CellChat)
+  library(igraph)
+})
+
+par(mfrow = c(1, 1), xpd = NA)
+
+edge_width_max <- 2
+weight_cap     <- 0.2
+arrow_width    <- edge_width_max / 2
+arrow_size     <- 0.3 * edge_width_max
+label_offset_in <- 0.6
+
+# Requested order (cluster 9 first); pass either indices or names
+sources.use <- c(9,12,13,14,15,16)
+targets.use <- c(9,12,13,14,15,16)
+
+# Inputs
+object  <- cellchat_merged_cortical_pnn
+comp    <- c(1, 2)
+measure <- "weight"  # "count" or "weight"
+
+# Access nets and ensure dimnames via idents
+net1 <- object@net[[comp[1]]]
+net2 <- object@net[[comp[2]]]
+mat1 <- net1[[measure]]
+mat2 <- net2[[measure]]
+
+fix_dimnames <- function(m, idents_levels) {
+  if (is.null(rownames(m)) && length(idents_levels) == nrow(m)) rownames(m) <- idents_levels
+  if (is.null(colnames(m)) && length(idents_levels) == ncol(m)) colnames(m) <- idents_levels
+  m
+}
+lvl1 <- if (is.list(object@idents)) levels(object@idents[[comp[1]]]) else levels(object@idents)
+lvl2 <- if (is.list(object@idents)) levels(object@idents[[comp[2]]]) else levels(object@idents)
+mat1 <- fix_dimnames(mat1, lvl1)
+mat2 <- fix_dimnames(mat2, lvl2)
+
+group_names_all <- rownames(mat1)
+if (is.null(group_names_all)) stop("Group names are missing; ensure idents have levels or matrices have dimnames.")
+
+# Map requested indices to names using the original names
+map_to_names <- function(v, names_all) {
+  if (is.numeric(v)) {
+    if (any(v < 1 | v > length(names_all))) stop("Index out of range in sources.use/targets.use")
+    names_all[v]
+  } else {
+    as.character(v)
+  }
+}
+sources_names <- map_to_names(sources.use, group_names_all)
+targets_names <- map_to_names(targets.use, group_names_all)
+
+# Relevel idents so the first requested name becomes the first sector; reorder all 2D nets accordingly
+first_label <- sources_names[1]
+new_levels <- c(first_label, setdiff(group_names_all, first_label))
+
+if (is.list(object@idents)) {
+  for (k in seq_along(object@idents)) {
+    cur_lev <- levels(object@idents[[k]])
+    keep_lev <- new_levels[new_levels %in% cur_lev]
+    object@idents[[k]] <- factor(object@idents[[k]], levels = keep_lev)
+  }
+} else {
+  cur_lev <- levels(object@idents)
+  keep_lev <- new_levels[new_levels %in% cur_lev]
+  object@idents <- factor(object@idents, levels = keep_lev)
+}
+
+mat_names_2d <- c("count","sum","weight","count.merged","weight.merged")
+for (i in seq_along(object@net)) {
+  for (mn in intersect(mat_names_2d, names(object@net[[i]]))) {
+    m <- object@net[[i]][[mn]]
+    rn <- rownames(m); cn <- colnames(m)
+    if (!is.null(rn) && !is.null(cn)) {
+      keep <- new_levels[new_levels %in% rn & new_levels %in% cn]
+      object@net[[i]][[mn]] <- m[keep, keep, drop = FALSE]
+    }
+  }
+}
+
+# Refresh matrices and valid group names after reordering
+net1 <- object@net[[comp[1]]]
+net2 <- object@net[[comp[2]]]
+mat1 <- net1[[measure]]
+mat2 <- net2[[measure]]
+group_names_all <- rownames(mat1)
+
+# Keep only requested names that still exist
+sources_names <- sources_names[sources_names %in% group_names_all]
+targets_names <- targets_names[targets_names %in% group_names_all]
+
+# Plot with default CellChat colors and asp=1 for perfect circle
+netVisual_diffInteraction(
+  object             = object,
+  comparison         = comp,
+  measure            = measure,
+  color.edge         = c("#b2182b", "#2166ac"),
+  weight.scale       = FALSE,
+  edge.weight.max    = weight_cap,
+  edge.width.max     = edge_width_max,
+  sources.use        = sources_names,
+  targets.use        = targets_names,
+  remove.isolate     = TRUE,
+  vertex.label.cex   = 1e-6,
+  vertex.label.color = NA,
+  title.name         = "",
+  margin             = 0.8,
+  alpha.edge         = 1,
+  shape              = "circle",
+  arrow.width        = arrow_width,
+  arrow.size         = arrow_size
+)
+
+# Function to wrap multi-word labels into two lines
+wrap_label <- function(label, max_width = 15) {
+  # Count number of words
+  words <- strsplit(label, " ")[[1]]
+  if (length(words) <= 1) {
+    return(label)
+  }
+  # Use strwrap to split into lines
+  wrapped <- strwrap(label, width = max_width)
+  # Combine with newline
+  paste(wrapped, collapse = "\n")
+}
+
+# Label placement aligned to plotted order among active nodes
+node_names_sel <- unique(c(sources_names, setdiff(targets_names, sources_names)))
+sub1 <- mat1[node_names_sel, node_names_sel, drop = FALSE]
+sub2 <- mat2[node_names_sel, node_names_sel, drop = FALSE]
+sub1z <- ifelse(is.na(sub1), 0, sub1)
+sub2z <- ifelse(is.na(sub2), 0, sub2)
+
+deg_any <- (rowSums(sub1z != 0) + colSums(sub1z != 0) +
+              rowSums(sub2z != 0) + colSums(sub2z != 0)) > 0
+active_names <- node_names_sel[deg_any]
+
+order_active_names <- unique(c(intersect(sources_names, active_names),
+                               setdiff(intersect(targets_names, active_names),
+                                       intersect(sources_names, active_names))))
+n_active <- length(order_active_names)
+
+if (n_active > 0) {
+  g_dummy <- igraph::make_empty_graph(n = n_active, directed = TRUE)
+  coords  <- igraph::layout_in_circle(g_dummy, order = seq_len(n_active))
+  x <- coords[,1]; y <- coords[,2]
+  theta <- atan2(y, x); ux <- cos(theta); uy <- sin(theta)
+  
+  dx_in <- grconvertX(1, "inches", "user") - grconvertX(0, "inches", "user")
+  dy_in <- grconvertY(1, "inches", "user") - grconvertY(0, "inches", "user")
+  vx <- ux * dx_in; vy <- uy * dy_in
+  vnorm <- sqrt(vx^2 + vy^2)
+  x_lab <- x + label_offset_in * vx / vnorm
+  y_lab <- y + label_offset_in * vy / vnorm
+  
+  deg <- theta * 180 / pi
+  pos_right  <- (deg >= -45 & deg < 45)
+  pos_top    <- (deg >= 45  & deg < 135)
+  pos_left   <- (deg >= 135 | deg <= -135)
+  pos_bottom <- (deg > -135 & deg < -45)
+  
+  adjx <- rep(0.5, n_active); adjy <- rep(0.5, n_active)
+  adjx[pos_right]  <- 0;   adjy[pos_right]  <- 0.5
+  adjx[pos_left]   <- 0.9; adjy[pos_left]   <- 0.5
+  adjx[pos_top]    <- 0.5; adjy[pos_top]    <- 0
+  adjx[pos_bottom] <- 0.5; adjy[pos_bottom] <- 1
+  
+  # Wrap labels for multi-word labels
+  wrapped_labels <- sapply(order_active_names, wrap_label, max_width = 15)
+  
+  for (i in seq_len(n_active)) {
+    text(
+      x = x_lab[i], y = y_lab[i], labels = wrapped_labels[i],
+      adj = c(adjx[i], adjy[i]), srt = 0,
+      cex = 1.3, col = "black", xpd = NA
+    )
+  }
+}
+
+
+
+
+
+
+# Violin plots for ligand-receptor pairs -----------------
+cellchat_merged_cortical_pnn@meta$datasets = factor(cellchat_merged_cortical_pnn@meta$datasets, levels = c("WT", "KO")) # set factor level
+plotGeneExpression(cellchat_merged_cortical_pnn, signaling = "TENASCIN", split.by = "datasets", colors.ggplot = T)
+
+
+
+
+# Differential chord diagram PV to Oligo (SAVES ALSO LOCALLY)----
+library(dplyr)
+library(circlize)
+library(ComplexHeatmap)
+library(RColorBrewer)
+library(scales)
+library(grid)
+
+# --- Data extraction and preprocessing ---
+comm_list <- subsetCommunication(cellchat_merged_cortical_pnn)
+comm1 <- comm_list[[1]]
+comm2 <- comm_list[[2]]
+comm_col <- if ("prob" %in% colnames(comm1)) "prob" else if ("value" %in% colnames(comm1)) "value" else colnames(comm1)[3]
+signaling_col <- if ("interaction_name" %in% colnames(comm1)) "interaction_name" else if ("pathway_name" %in% colnames(comm1)) "pathway_name" else NA
+
+comm1_sub <- comm1[, c("source", "target", signaling_col, comm_col)]
+comm2_sub <- comm2[, c("source", "target", signaling_col, comm_col)]
+names(comm1_sub)[4] <- "val1"
+names(comm2_sub)[4] <- "val2"
+diff_data <- full_join(comm1_sub, comm2_sub,
+                       by = c("source", "target", signaling_col)) %>%
+  mutate(val1 = replace_na(val1, 0),
+         val2 = replace_na(val2, 0),
+         diff = val2 - val1)
+
+# --- Subset cell populations ---
+sources.use <- c("PV+ Int")
+targets.use <- c("OPC", "Perineuronal Oligo", "New Oligo", "Myelinating Oligo")
+
+df <- diff_data %>%
+  filter(source %in% sources.use, target %in% targets.use, diff != 0) %>%
+  mutate(pathway = get(signaling_col),
+         sector_from = paste("FROM", source, pathway, sep = "|"),
+         sector_to   = paste("TO", target, pathway, sep = "|"))
+
+# --- Unique sectors (nodes) ---
+sectors_in_df <- c(
+  df %>% transmute(sector = sector_from) %>% pull(sector) %>% unique(),
+  df %>% transmute(sector = sector_to)   %>% pull(sector) %>% unique()
+) %>% unique()
+
+# --- Parse sectors and derive ligand core ---
+parse_sector <- function(sec) {
+  x <- strsplit(sec, "\\|")[[1]]
+  data.frame(
+    sector = sec,
+    side = x[1],
+    celltype = x[2],
+    pathway = x[3],
+    stringsAsFactors = FALSE
+  )
+}
+sectors_df <- do.call(rbind, lapply(sectors_in_df, parse_sector))
+
+extract_ligand_core <- function(interaction) {
+  if (is.na(interaction)) return(NA_character_)
+  ligand <- sub("_.*", "", interaction)     # before underscore
+  ligand_core <- sub("[0-9]+$", "", ligand) # drop trailing digits
+  toupper(ligand_core)
+}
+sectors_df <- sectors_df %>%
+  mutate(ligand_core = vapply(pathway, extract_ligand_core, character(1)))
+
+# --- Group similar ligands into families ---
+map_ligand_group <- function(core) {
+  if (is.na(core)) return("UNKNOWN")
+  core_up <- toupper(core)
+  if (grepl("^LAM[A-C]", core_up)) return("LAMININ")  # LAMA/LAMB/LAMC
+  if (grepl("^LRRC",    core_up)) return("LRRC")      # LRRC/LRRC4B...
+  if (grepl("^SEMA",    core_up)) return("SEMA")      # SEMA4D/SEMA5A/SEMA6A...
+  fallback <- sub("([A-Z]+).*", "\\1", core_up)       # alphabetic stem
+  if (nzchar(fallback)) return(fallback)
+  return("OTHER")
+}
+sectors_df <- sectors_df %>%
+  mutate(ligand_group = vapply(ligand_core, map_ligand_group, character(1)))
+
+# --- Weights for ordering (sum of |diff| touching a sector) ---
+sector_weights <- bind_rows(
+  df %>% group_by(sector = sector_from) %>% summarise(w = sum(abs(diff)), .groups = "drop"),
+  df %>% group_by(sector = sector_to)   %>% summarise(w = sum(abs(diff)), .groups = "drop")
+) %>% group_by(sector) %>% summarise(w = sum(w), .groups = "drop")
+
+sectors_df <- sectors_df %>% left_join(sector_weights, by = "sector")
+sectors_df$w[is.na(sectors_df$w)] <- 0
+
+# --- Per-cell type ligand-family weights for ordering ---
+group_weights_ct <- sectors_df %>%
+  group_by(celltype, ligand_group) %>%
+  summarise(group_w = sum(w), .groups = "drop")
+
+# --- Order sectors: biggest ligand-family first within each cell type ---
+celltype_order <- unique(sectors_df$celltype)
+ordered_sectors <- character(0)
+
+for (ct in celltype_order) {
+  gtab <- group_weights_ct %>% filter(celltype == ct) %>% arrange(desc(group_w))
+  groups_ct <- gtab$ligand_group
+  secs_ct <- sectors_df %>% filter(celltype == ct)
+  for (g in groups_ct) {
+    secs_ct_g <- secs_ct %>% filter(ligand_group == g)
+    from_first <- secs_ct_g %>% filter(side == "FROM") %>% arrange(pathway, sector)
+    to_next    <- secs_ct_g %>% filter(side == "TO")   %>% arrange(pathway, sector)
+    ordered_sectors <- c(ordered_sectors, from_first$sector, to_next$sector)
+  }
+}
+ordered_sectors <- intersect(unique(ordered_sectors), sectors_in_df)
+
+# --- Colors ---
+# Cell type colors (user defaults)
+celltype_colors_user <- c(
+  "PV+ Int" = "#DD4124",
+  "OPC" = "#4BACC6",
+  "Perineuronal Oligo" = "#ea8a33",
+  "New Oligo" = "#E8A0BF",
+  "Myelinating Oligo" = "#9B2335"
+)
+missing_ct <- setdiff(celltype_order, names(celltype_colors_user))
+if (length(missing_ct) > 0) {
+  extra_cols <- colorRampPalette(brewer.pal(8, "Set1"))(length(missing_ct))
+  names(extra_cols) <- missing_ct
+  celltype_colors <- c(celltype_colors_user, extra_cols)
+} else {
+  celltype_colors <- celltype_colors_user
+}
+celltype_colors <- celltype_colors[celltype_order]
+
+# --- Very distinct ligand-family colors (avoid black and very dark) ---
+# Convert hex to Lab using base grDevices
+hex_to_lab <- function(hex_vec) {
+  rgb01 <- t(grDevices::col2rgb(hex_vec) / 255)
+  grDevices::convertColor(rgb01, from = "sRGB", to = "Lab")
+}
+exclude_dark <- function(cols, L_min = 20) {
+  lab <- hex_to_lab(cols)
+  cols[!is.na(lab[, 1]) & lab[, 1] >= L_min]
+}
+
+# Okabe–Ito without black/near-black
+okabe_ito_nonblack <- function(maxn = 9) {
+  pal <- tryCatch(grDevices::palette.colors(maxn, palette = "Okabe-Ito"),
+                  error = function(e) NULL)
+  if (is.null(pal)) return(character(0))
+  pal <- pal[!tolower(pal) %in% c("#000000", "black")]
+  pal <- exclude_dark(pal, L_min = 20)
+  unique(pal)
+}
+
+# Dense HCL candidates (vivid, within sRGB gamut)
+hcl_candidates <- function(m_per_ring = 720) {
+  h <- seq(0, 360 - 360/m_per_ring, length.out = m_per_ring)
+  c1 <- grDevices::hcl(h = h, c = 70, l = 65)
+  c2 <- grDevices::hcl(h = (h + 180/m_per_ring) %% 360, c = 70, l = 55)
+  unique(c(c1, c2))
+}
+
+# Greedy farthest-point selection in Lab with optional seeds
+select_farthest_lab_seeded <- function(candidates_hex, n, seed_hex = character(0)) {
+  candidates_hex <- unique(candidates_hex)
+  candidates_hex <- candidates_hex[!is.na(candidates_hex)]
+  selected <- unique(seed_hex)
+  selected <- selected[selected %in% candidates_hex]
+  remaining <- setdiff(candidates_hex, selected)
+  if (length(selected) == 0 && length(remaining) > 0) {
+    lab <- hex_to_lab(remaining)
+    dmat <- as.matrix(dist(lab))
+    start <- remaining[which.max(rowMeans(dmat))]
+    selected <- c(selected, start)
+    remaining <- setdiff(remaining, start)
+  }
+  while (length(selected) < n && length(remaining) > 0) {
+    lab_sel <- hex_to_lab(selected)
+    lab_rem <- hex_to_lab(remaining)
+    d <- as.matrix(dist(rbind(lab_sel, lab_rem)))
+    ns <- nrow(lab_sel); nr <- nrow(lab_rem)
+    d_sr <- d[seq_len(ns), ns + seq_len(nr), drop = FALSE]
+    mind <- apply(d_sr, 2, min)
+    next_idx <- which.max(mind)
+    selected <- c(selected, remaining[next_idx])
+    remaining <- remaining[-next_idx]
+  }
+  selected[seq_len(min(n, length(selected)))]
+}
+
+# Reorder colors to maximize adjacency contrast
+order_max_contrast <- function(hex_vec) {
+  if (length(hex_vec) <= 2) return(hex_vec)
+  lab <- hex_to_lab(hex_vec)
+  dmat <- as.matrix(dist(lab))
+  start <- which.max(rowMeans(dmat))
+  order_idx <- start
+  remaining <- setdiff(seq_along(hex_vec), start)
+  current <- start
+  while (length(remaining) > 0) {
+    nxt <- remaining[which.max(dmat[current, remaining])]
+    order_idx <- c(order_idx, nxt)
+    remaining <- setdiff(remaining, nxt)
+    current <- nxt
+  }
+  hex_vec[order_idx]
+}
+
+# Build distinct palette: avoid black, maximize pairwise Lab distance
+make_distinct_ligand_palette <- function(n) {
+  seed <- if (n <= 9) head(okabe_ito_nonblack(9), n) else character(0)
+  cand <- unique(c(okabe_ito_nonblack(9), hcl_candidates(720)))
+  cand <- exclude_dark(cand, L_min = 20)
+  sel  <- select_farthest_lab_seeded(cand, n, seed_hex = seed)
+  order_max_contrast(sel)
+}
+
+# Identify ligand groups and assign colors with adjacency contrast along ring
+ligand_groups_all <- unique(sectors_df$ligand_group)
+n_lg <- length(ligand_groups_all)
+palette_distinct <- make_distinct_ligand_palette(n_lg)
+
+# Determine the appearance order of ligand groups along the ring using FROM sectors
+ligand_group_per_sector_all <- setNames(sectors_df$ligand_group, sectors_df$sector)
+side_per_sector_all         <- setNames(sectors_df$side,         sectors_df$sector)
+lg_ring   <- ligand_group_per_sector_all[ordered_sectors]
+side_ring <- side_per_sector_all[ordered_sectors]
+ring_groups <- unique(lg_ring[side_ring == "FROM"])
+ring_groups <- ring_groups[!is.na(ring_groups)]
+
+# Map colors to ring groups to maximize adjacent contrast; remaining groups follow
+assign_groups <- c(ring_groups, setdiff(ligand_groups_all, ring_groups))
+ligand_group_colors <- setNames(palette_distinct[seq_along(assign_groups)], assign_groups)
+
+# --- Chord node colors (for sector grids; bands come from highlights)
+chord_colors <- setNames(
+  colorRampPalette(RColorBrewer::brewer.pal(8, "Set2"))(length(ordered_sectors)),
+  ordered_sectors
+)
+
+# --- Edge appearance ---
+color.edge <- c("#b2182b", "#2166ac")
+link_col <- ifelse(df$diff >= 0, color.edge[1], color.edge[2])
+max_width <- 10
+link_lwd <- if (nrow(df) > 0) rescale(abs(df$diff), to = c(1, max_width)) else numeric()
+
+# --- Gaps based on new order (small within-ct, larger between-ct) ---
+sector_celltype_ordered <- setNames(sectors_df$celltype, sectors_df$sector)[ordered_sectors]
+gap_vec <- ifelse(
+  c(TRUE, diff(as.numeric(factor(sector_celltype_ordered, levels = celltype_order))) == 0),
+  0.2, 4
+)
+
+# Name gaps to sector order (add this line)
+names(gap_vec) <- ordered_sectors
+
+# --- Plotting with spacers and selective inner ring (sources only) ---
+circos.clear()
+circos.par(
+  start.degree = 90,
+  gap.after = gap_vec,
+  cell.padding = c(0, 0, 0, 0),
+  track.margin = c(0, 0),
+  points.overflow.warning = FALSE,
+  unit.circle.segments = 500
+)
+
+if (nrow(df) > 0 && length(ordered_sectors) > 1) {
+  chordDiagram(
+    x = df[, c("sector_from", "sector_to", "diff")],
+    grid.col = chord_colors[ordered_sectors],
+    directional = 1,
+    direction.type = c("arrows"),
+    link.arr.type = "big.arrow",
+    link.arr.length = 0.20,
+    transparency = 0.6,
+    link.lwd = link_lwd,
+    link.border = NA,
+    col = link_col,
+    order = ordered_sectors,
+    annotationTrack = NULL,
+    reduce = 0,
+    preAllocateTracks = list(
+      list(track.height = 0.09, bg.border = NA),         # 1: outer cell-type ring
+      list(track.height = circlize::mm_h(2), bg.border = NA),      # 2: spacer outer-inner
+      list(track.height = 0.08, bg.border = NA),         # 3: inner ligand-family ring
+      list(track.height = circlize::mm_h(1.5), bg.border = NA)     # 4: spacer inner-links
+    )
+  )
+  
+  # --- Outer cell-type band: continuous per cell type (track 1) ---
+  for (ct in celltype_order) {
+    secs_ct <- ordered_sectors[sector_celltype_ordered == ct]
+    if (length(secs_ct) > 0) {
+      circlize::highlight.sector(
+        sector.index = secs_ct,
+        track.index = 1,
+        col = celltype_colors[ct],
+        border = NA,
+        padding = c(0, 0, 0, 0)
+      )
+    }
+  }
+  
+  # --- Inner ligand-family band: draw ONLY for sources (FROM), not targets (track 3) ---
+  ligand_group_per_sector <- setNames(sectors_df$ligand_group, sectors_df$sector)
+  side_per_sector         <- setNames(sectors_df$side,         sectors_df$sector)
+  ligand_group_per_sector <- ligand_group_per_sector[ordered_sectors]
+  side_per_sector         <- side_per_sector[ordered_sectors]
+  
+  for (lg in names(ligand_group_colors)) {
+    secs_lg_from <- names(ligand_group_per_sector)[
+      ligand_group_per_sector == lg & side_per_sector == "FROM"
+    ]
+    if (length(secs_lg_from) > 0) {
+      circlize::highlight.sector(
+        sector.index = secs_lg_from,
+        track.index  = 3,
+        col          = ligand_group_colors[lg],
+        border       = NA,
+        padding      = c(0, 0, 0, 0)
+      )
+    }
+  }
+  
+  # --- Legends (packed and movable) ---
+  edge_legend <- ComplexHeatmap::Legend(
+    labels = ComplexHeatmap::gt_render(c(
+      "Increased in <i>Dnmt1</i>-KO",
+      "Decreased in <i>Dnmt1</i>-KO"
+    )),
+    legend_gp = grid::gpar(fill = color.edge),
+    labels_gp = grid::gpar(fontsize = 10),
+    title = "Edge"
+  )
+  ct_legend <- ComplexHeatmap::Legend(
+    labels = names(celltype_colors),
+    legend_gp = grid::gpar(fill = unname(celltype_colors), col = unname(celltype_colors)),
+    title = "Cell Population"
+  )
+  ligand_legend <- ComplexHeatmap::Legend(
+    labels = names(ligand_group_colors),
+    legend_gp = grid::gpar(fill = unname(ligand_group_colors), col = unname(ligand_group_colors)),
+    title = "Ligand Family"
+  )
+  pd <- ComplexHeatmap::packLegend(edge_legend, ct_legend, ligand_legend, direction = "vertical")
+  ComplexHeatmap::draw(pd, x = grid::unit(0.98, "npc"), y = grid::unit(0.95, "npc"), just = c("right", "top"))
+} else {
+  message("Not enough edges or sectors to plot a chord diagram. Check your filter and input.")
+}
+
+# --- Optional: print top pathway changes
+top_up   <- df %>% arrange(-diff) %>% head(10)
+top_down <- df %>% arrange(diff)  %>% head(10)
+cat("\nMost increased signaling pairs (source, target, pathway, diff):\n")
+print(top_up[, c("source", "target", signaling_col, "diff")])
+cat("\nMost decreased signaling pairs:\n")
+print(top_down[, c("source", "target", signaling_col, "diff")])
+
+# --- Save diagram to PNG in working directory ---
+# Copies the current plot to a PNG file at 300 DPI without rerunning the plotting code
+if (nrow(df) > 0 && length(ordered_sectors) > 1) {
+  out_png <- "differential_chord_PV_oligos.png"
+  grDevices::dev.copy(
+    grDevices::png,
+    filename = out_png,
+    width = 12,
+    height = 8,
+    units = "in",
+    res = 600
+  )
+  grDevices::dev.off()
+  message("Saved chord diagram to: ", normalizePath(out_png))
+}
+
+save(ligand_group_colors, file = "ligand_group_colors_PV_to_oligo.RData")
+
+
+
+# Differential chord diagram Oligo to PV (SAVES ALSO LOCALLY)----
+library(dplyr)
+library(circlize)
+library(ComplexHeatmap)
+library(RColorBrewer)
+library(scales)
+library(grid)
+
+# --- Data extraction and preprocessing ---
+comm_list <- subsetCommunication(cellchat_merged_cortical_pnn)
+comm1 <- comm_list[[1]]
+comm2 <- comm_list[[2]]
+comm_col <- if ("prob" %in% colnames(comm1)) "prob" else if ("value" %in% colnames(comm1)) "value" else colnames(comm1)[3]
+signaling_col <- if ("interaction_name" %in% colnames(comm1)) "interaction_name" else if ("pathway_name" %in% colnames(comm1)) "pathway_name" else NA
+
+comm1_sub <- comm1[, c("source", "target", signaling_col, comm_col)]
+comm2_sub <- comm2[, c("source", "target", signaling_col, comm_col)]
+names(comm1_sub)[4] <- "val1"
+names(comm2_sub)[4] <- "val2"
+diff_data <- full_join(comm1_sub, comm2_sub,
+                       by = c("source", "target", signaling_col)) %>%
+  mutate(val1 = replace_na(val1, 0),
+         val2 = replace_na(val2, 0),
+         diff = val2 - val1)
+
+# --- Subset cell populations (Flipped: targets become sources, sources become targets) ---
+sources.use <- c("OPC", "Perineuronal Oligo", "New Oligo", "Myelinating Oligo")
+targets.use <- c("PV+ Int")
+
+df <- diff_data %>%
+  filter(source %in% sources.use, target %in% targets.use, diff != 0) %>%
+  mutate(pathway = get(signaling_col),
+         sector_from = paste("FROM", source, pathway, sep = "|"),
+         sector_to   = paste("TO", target, pathway, sep = "|"))
+
+# --- Unique sectors (nodes) ---
+sectors_in_df <- c(
+  df %>% transmute(sector = sector_from) %>% pull(sector) %>% unique(),
+  df %>% transmute(sector = sector_to)   %>% pull(sector) %>% unique()
+) %>% unique()
+
+# --- Parse sectors and ligand grouping ---
+parse_sector <- function(sec) {
+  x <- strsplit(sec, "\\|")[[1]]
+  data.frame(
+    sector = sec,
+    side = x[1],
+    celltype = x[2],
+    pathway = x[3],
+    stringsAsFactors = FALSE
+  )
+}
+sectors_df <- do.call(rbind, lapply(sectors_in_df, parse_sector))
+
+extract_ligand_core <- function(interaction) {
+  if (is.na(interaction)) return(NA_character_)
+  ligand <- sub("_.*", "", interaction)
+  ligand_core <- sub("[0-9]+$", "", ligand)
+  toupper(ligand_core)
+}
+sectors_df <- sectors_df %>%
+  mutate(ligand_core = vapply(pathway, extract_ligand_core, character(1)))
+
+# --- Updated: keep L1CAM intact ---
+map_ligand_group <- function(core) {
+  if (is.na(core)) return("UNKNOWN")
+  core_up <- toupper(core)
+  if (grepl("^LAM[A-C]", core_up)) return("LAMININ")
+  if (grepl("^LRRC", core_up)) return("LRRC")
+  if (grepl("^SEMA", core_up)) return("SEMA")
+  if (core_up == "L1CAM") return("L1CAM")  # ensure L1CAM stays intact
+  fallback <- sub("([A-Z]{2,}).*", "\\1", core_up)  # require ≥2 letters
+  if (nzchar(fallback)) return(fallback)
+  return("OTHER")
+}
+sectors_df <- sectors_df %>%
+  mutate(ligand_group = vapply(ligand_core, map_ligand_group, character(1)))
+
+# --- Weight computation and ordering preserved ---
+sector_weights <- bind_rows(
+  df %>% group_by(sector = sector_from) %>% summarise(w = sum(abs(diff)), .groups = "drop"),
+  df %>% group_by(sector = sector_to)   %>% summarise(w = sum(abs(diff)), .groups = "drop")
+) %>% group_by(sector) %>% summarise(w = sum(w), .groups = "drop")
+
+sectors_df <- sectors_df %>% left_join(sector_weights, by = "sector")
+sectors_df$w[is.na(sectors_df$w)] <- 0
+
+group_weights_ct <- sectors_df %>%
+  group_by(celltype, ligand_group) %>%
+  summarise(group_w = sum(w), .groups = "drop")
+
+celltype_order <- unique(sectors_df$celltype)
+ordered_sectors <- character(0)
+for (ct in celltype_order) {
+  gtab <- group_weights_ct %>% filter(celltype == ct) %>% arrange(desc(group_w))
+  groups_ct <- gtab$ligand_group
+  secs_ct <- sectors_df %>% filter(celltype == ct)
+  for (g in groups_ct) {
+    secs_ct_g <- secs_ct %>% filter(ligand_group == g)
+    from_first <- secs_ct_g %>% filter(side == "FROM") %>% arrange(pathway, sector)
+    to_next    <- secs_ct_g %>% filter(side == "TO")   %>% arrange(pathway, sector)
+    ordered_sectors <- c(ordered_sectors, from_first$sector, to_next$sector)
+  }
+}
+ordered_sectors <- intersect(unique(ordered_sectors), sectors_in_df)
+
+# --- Keep same colors for populations and ligand families ---
+celltype_colors_user <- c(
+  "PV+ Int" = "#DD4124",
+  "OPC" = "#4BACC6",
+  "Perineuronal Oligo" = "#ea8a33",
+  "New Oligo" = "#E8A0BF",
+  "Myelinating Oligo" = "#9B2335"
+)
+missing_ct <- setdiff(celltype_order, names(celltype_colors_user))
+if (length(missing_ct) > 0) {
+  extra_cols <- colorRampPalette(brewer.pal(8, "Set1"))(length(missing_ct))
+  names(extra_cols) <- missing_ct
+  celltype_colors <- c(celltype_colors_user, extra_cols)
+} else {
+  celltype_colors <- celltype_colors_user
+}
+celltype_colors <- celltype_colors[celltype_order]
+
+# --- Reuse ligand color map from PV -> Oligo if available ---
+if (file.exists("ligand_group_colors_PV_to_oligo.RData")) {
+  load("ligand_group_colors_PV_to_oligo.RData")
+} else {
+  warning("Using default new ligand color map; PV_to_oligo map not found.")
+  ligand_groups_all <- unique(sectors_df$ligand_group)
+  n_lg <- length(ligand_groups_all)
+  palette_distinct <- colorRampPalette(brewer.pal(12, "Paired"))(n_lg)
+  ligand_group_colors <- setNames(palette_distinct[seq_along(ligand_groups_all)], ligand_groups_all)
+}
+
+# Add any new ligand families (not present in the saved map)
+missing <- setdiff(unique(sectors_df$ligand_group), names(ligand_group_colors))
+if (length(missing) > 0) {
+  add_cols <- colorRampPalette(brewer.pal(8, "Set2"))(length(missing))
+  names(add_cols) <- missing
+  ligand_group_colors <- c(ligand_group_colors, add_cols)
+}
+
+# --- Chord Plot ---
+chord_colors <- setNames(colorRampPalette(RColorBrewer::brewer.pal(8, "Set2"))(length(ordered_sectors)), ordered_sectors)
+color.edge <- c("#b2182b", "#2166ac")
+link_col <- ifelse(df$diff >= 0, color.edge[1], color.edge[2])
+max_width <- 10
+link_lwd <- if (nrow(df) > 0) rescale(abs(df$diff), to = c(1, max_width)) else numeric()
+sector_celltype_ordered <- setNames(sectors_df$celltype, sectors_df$sector)[ordered_sectors]
+gap_vec <- ifelse(c(TRUE, diff(as.numeric(factor(sector_celltype_ordered, levels = celltype_order))) == 0), 0.2, 4)
+names(gap_vec) <- ordered_sectors
+
+circos.clear()
+circos.par(start.degree = 90, gap.after = gap_vec, cell.padding = c(0, 0, 0, 0),
+           track.margin = c(0, 0), points.overflow.warning = FALSE,
+           unit.circle.segments = 500)
+
+if (nrow(df) > 0 && length(ordered_sectors) > 1) {
+  chordDiagram(
+    x = df[, c("sector_from", "sector_to", "diff")],
+    grid.col = chord_colors[ordered_sectors],
+    directional = 1,
+    direction.type = c("arrows"),
+    link.arr.type = "big.arrow",
+    link.arr.length = 0.20,
+    transparency = 0.6,
+    link.lwd = link_lwd,
+    link.border = NA,
+    col = link_col,
+    order = ordered_sectors,
+    annotationTrack = NULL,
+    reduce = 0,
+    preAllocateTracks = list(
+      list(track.height = 0.09, bg.border = NA),
+      list(track.height = circlize::mm_h(2), bg.border = NA),
+      list(track.height = 0.08, bg.border = NA),
+      list(track.height = circlize::mm_h(1.5), bg.border = NA)
+    )
+  )
+  
+  for (ct in celltype_order) {
+    secs_ct <- ordered_sectors[sector_celltype_ordered == ct]
+    if (length(secs_ct) > 0) {
+      circlize::highlight.sector(sector.index = secs_ct, track.index = 1,
+                                 col = celltype_colors[ct], border = NA, padding = c(0, 0, 0, 0))
+    }
+  }
+  
+  ligand_group_per_sector <- setNames(sectors_df$ligand_group, sectors_df$sector)
+  side_per_sector         <- setNames(sectors_df$side,         sectors_df$sector)
+  ligand_group_per_sector <- ligand_group_per_sector[ordered_sectors]
+  side_per_sector         <- side_per_sector[ordered_sectors]
+  
+  for (lg in names(ligand_group_colors)) {
+    secs_lg_from <- names(ligand_group_per_sector)[ligand_group_per_sector == lg & side_per_sector == "FROM"]
+    if (length(secs_lg_from) > 0) {
+      circlize::highlight.sector(sector.index = secs_lg_from, track.index = 3,
+                                 col = ligand_group_colors[lg], border = NA, padding = c(0, 0, 0, 0))
+    }
+  }
+  
+  edge_legend <- ComplexHeatmap::Legend(
+    labels = ComplexHeatmap::gt_render(c("Increased in <i>Dnmt1</i>-KO", "Decreased in <i>Dnmt1</i>-KO")),
+    legend_gp = grid::gpar(fill = color.edge), labels_gp = grid::gpar(fontsize = 10), title = "Edge"
+  )
+  ct_legend <- ComplexHeatmap::Legend(
+    labels = names(celltype_colors),
+    legend_gp = grid::gpar(fill = unname(celltype_colors), col = unname(celltype_colors)),
+    title = "Cell Population"
+  )
+  ligand_legend <- ComplexHeatmap::Legend(
+    labels = names(ligand_group_colors),
+    legend_gp = grid::gpar(fill = unname(ligand_group_colors), col = unname(ligand_group_colors)),
+    title = "Ligand Family"
+  )
+  pd <- ComplexHeatmap::packLegend(edge_legend, ct_legend, ligand_legend, direction = "vertical")
+  ComplexHeatmap::draw(pd, x = grid::unit(0.98, "npc"),
+                       y = grid::unit(0.95, "npc"), just = c("right", "top"))
+} else {
+  message("Not enough edges or sectors to plot a chord diagram. Check your filter and input.")
+}
+
+top_up   <- df %>% arrange(-diff) %>% head(10)
+top_down <- df %>% arrange(diff)  %>% head(10)
+cat("\nMost increased signaling pairs (source, target, pathway, diff):\n")
+print(top_up[, c("source", "target", signaling_col, "diff")])
+cat("\nMost decreased signaling pairs:\n")
+print(top_down[, c("source", "target", signaling_col, "diff")])
+
+if (nrow(df) > 0 && length(ordered_sectors) > 1) {
+  out_png <- "differential_chord_Oligos_to_PV.png"
+  grDevices::dev.copy(grDevices::png, filename = out_png, width = 12, height = 8, units = "in", res = 300)
+  grDevices::dev.off()
+  message("Saved chord diagram to: ", normalizePath(out_png))
+}
