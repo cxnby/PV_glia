@@ -1,0 +1,247 @@
+import qupath.lib.objects.PathAnnotationObject
+import qupath.lib.roi.ROIs
+import qupath.lib.geom.Point2
+
+int channelIndex = 0                   // Channel 1
+int channelIndex2 = 1                  // Channel 2
+
+def imageData = getCurrentImageData()
+
+import qupath.lib.regions.RegionRequest
+import qupath.lib.images.servers.ImageServer
+import java.awt.geom.AffineTransform
+
+// Global server and channel index
+def server = getCurrentImageData().getServer()
+
+// Measurement function with channelIndex as a parameter
+def measureIntensity(server, annotation, int channelIdx) {
+    def roi = annotation.getROI()
+    def regionRequest = RegionRequest.createInstance(server.getPath(), 1, roi)
+    def img = server.readRegion(regionRequest)
+    def shape = roi.getShape()
+
+    AffineTransform transform = AffineTransform.getTranslateInstance(-regionRequest.getX(), -regionRequest.getY())
+    def transformedShape = transform.createTransformedShape(shape)
+
+    int width = img.getWidth()
+    int height = img.getHeight()
+
+    double sumIntensity = 0.0
+    int countPixels = 0
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            if (transformedShape.contains(x, y)) {
+                def pixel = img.getRaster().getSample(x, y, channelIdx)
+                sumIntensity += pixel
+                countPixels++
+            }
+        }
+    }
+    return countPixels > 0 ? sumIntensity / countPixels : Double.NaN
+}
+
+
+// Measure cortex
+def cortexAnnotation = getAnnotationObjects().find { it.getName() == "Cortex" }
+if (cortexAnnotation == null) {
+    println "No ROI with name 'Cortex' found!"
+    return
+}
+def cortexValue = measureIntensity(server, cortexAnnotation, channelIndex)
+println "Cortex-Intensity: ${cortexValue}"
+
+//Threshold for PV cell detection with Piecewise-linear formula 
+double PVthreshold
+if (cortexValue <= 600) {
+    // Lower range: exact fit for 400→300 and 1000→800
+    PVthreshold = 1.344 * cortexValue + 19
+} else {
+    // Upper range: linear regression of mid/high values
+    PVthreshold = 1.72 * cortexValue + 61
+}
+
+// Round to nearest hundred
+PVthreshold = (int)Math.round(PVthreshold)
+
+// Adjust threshold to the nearest 100
+// - If threshold < 1200 → round down to the nearest hundred
+// - If threshold >= 1200 → round up to the nearest hundred
+if (PVthreshold < 1200) {
+    PVthreshold = Math.floor(PVthreshold / 100) * 100
+} else {
+    PVthreshold = Math.ceil(PVthreshold / 100) * 100
+}
+
+
+print("Automatically calculated PV threshold: " + PVthreshold)
+
+
+// Cell detection with cell expansion (for intensity measurement in the expanded region)
+runPlugin('qupath.imagej.detect.cells.WatershedCellDetection', """
+{
+  "detectionImage": "Channel 1",
+  "requestedPixelSizeMicrons": 0.5,
+  "backgroundRadiusMicrons": 8.0,
+  "medianRadiusMicrons": 3,
+  "sigmaMicrons": 3.5,
+  "minAreaMicrons": 30.0,
+  "maxAreaMicrons": 1000.0,
+  "threshold": ${PVthreshold},
+  "cellExpansionMicrons": 10.0,
+  "includeNuclei": true,
+  "smoothBoundaries": true,
+  "makeMeasurements": true
+}
+""")
+
+import qupath.lib.objects.PathAnnotationObject
+
+// get objects (cells)
+def cells = getDetectionObjects()
+
+
+// Convert each cell into an annotation
+cells.each { cell ->
+    def roi = cell.getROI()
+    def annotation = new PathAnnotationObject(roi)
+    addObject(annotation)
+}
+
+// Number annotations sequentially and assign names
+def annotationsToNumber = getAnnotationObjects().findAll { it.getName() == null || it.getName() == 'unnamed' }
+int counter = 1
+annotationsToNumber.each { annotation ->
+    annotation.setName(counter.toString())
+    counter++
+}
+
+import qupath.lib.regions.RegionRequest
+import qupath.lib.images.servers.ImageServer
+import java.awt.geom.AffineTransform
+
+
+
+// Measurement function with channelIndex2 as a parameter
+def measureIntensity2(server, annotation, int channelIdx2) {
+    def roi = annotation.getROI()
+    def regionRequest = RegionRequest.createInstance(server.getPath(), 1, roi)
+    def img = server.readRegion(regionRequest)
+    def shape = roi.getShape()
+
+    AffineTransform transform = AffineTransform.getTranslateInstance(-regionRequest.getX(), -regionRequest.getY())
+    def transformedShape = transform.createTransformedShape(shape)
+
+    int width = img.getWidth()
+    int height = img.getHeight()
+
+    double sumIntensity = 0.0
+    int countPixels = 0
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            if (transformedShape.contains(x, y)) {
+                def pixel = img.getRaster().getSample(x, y, channelIdx2)
+                sumIntensity += pixel
+                countPixels++
+            }
+        }
+    }
+    return countPixels > 0 ? sumIntensity / countPixels : Double.NaN
+}
+
+def backgroundAnnotation = getAnnotationObjects().find { it.getName() == "Background" }
+def BackgroundValue = measureIntensity2(server, backgroundAnnotation, channelIndex2)
+println "Background-Intensity: ${BackgroundValue}"
+
+
+// Exclude drawn ROI
+String excludeROIName = "ExcludeROI"  
+def excludeAnnotation = getAnnotationObjects().find { it.getName() == excludeROIName }
+
+def rois = getAnnotationObjects().findAll { annotation ->
+    annotation != cortexAnnotation &&
+    annotation != excludeAnnotation &&
+    annotation != backgroundAnnotation
+}
+
+rois.each { annotation ->
+    def roiValue = measureIntensity2(server, annotation, channelIndex2)
+    println "ROI '${annotation.getName() ?: 'unnamed'}' - Intensity: ${roiValue}"
+}
+
+
+
+// Calculate threshold as 1.3× cortex intensity
+def threshold = 1.3 * BackgroundValue
+println "Threshold (1.3x Cortex-Intensity): ${threshold}"
+
+def positiveROIs = []
+int totalROIs = rois.size()
+
+rois.each { annotation ->
+    def roiValue = measureIntensity2(server, annotation, channelIndex2)
+
+    if (roiValue > threshold) {
+        println "ROI '${annotation.getName() ?: 'unnamed'}' - Intensity: ${roiValue} > Threshold (${threshold})"
+        positiveROIs << annotation.getName() ?: 'unnamed'
+    } else {
+        println "ROI '${annotation.getName() ?: 'unnamed'}' - Intensity: ${roiValue}"
+    }
+}
+
+int positiveCount = positiveROIs.size()
+println "Number of cells (Annotationen): ${totalROIs}"
+println "Number of cells above the 1.3x percentile (Threshold): ${positiveCount}"
+
+
+
+
+// Retrieve current image and its name
+def imageName = server.getMetadata().getName()
+
+// Extract filename without extension
+def baseName = imageName.contains('.') ? imageName.substring(0, imageName.lastIndexOf('.')) : imageName
+
+// Define save path (e.g., same folder or fixed path)
+def saveDir = ""
+
+// Base file path
+def filePath = saveDir + File.separator + baseName + "_results.csv"
+
+// Initialize file object
+def file = new File(filePath)
+
+// Check if file already exists – if so, append a number (_1, _2, ...)
+def fileCounter = 1
+while (file.exists()) {
+    filePath = saveDir + File.separator + baseName + "_results_" + fileCounter + ".csv"
+    file = new File(filePath)
+    fileCounter++
+}
+
+
+// Write CSV
+file.withWriter('UTF-8') { writer ->
+    writer.writeLine("ROI-Name,Normalized value,above threshold")
+
+    rois.each { annotation ->
+        def roiName = annotation.getName() ?: 'unnamed'
+        def roiValue = measureIntensity(server, annotation, channelIndex)
+        boolean ueberSchwelle = roiValue > threshold
+        writer.writeLine("${roiName},${roiValue},${ueberSchwelle}")
+    }
+
+    // Empty line for better readability
+    writer.writeLine("")
+    // Append summary values
+    writer.writeLine("Total number of detected PV cells,${totalROIs}")
+    writer.writeLine("PV cells with PNN(Cortex x 1.3),${positiveCount}")
+    
+   
+}
+
+println "CSV file saved at: ${filePath}"
+
+
